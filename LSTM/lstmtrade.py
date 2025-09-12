@@ -464,7 +464,7 @@ def main():
         sell_prices = [test_df.loc[date, 'close'] for date in sell_dates]
         plt.scatter(sell_dates, sell_prices, color='orange', marker='v', s=100, label='Venda', zorder=5)
     
-    plt.title('PETR4.SA - Preços e Sinais de Trading')
+    plt.title(f'{TICKER} - Preços e Sinais de Trading')
     plt.ylabel('Preço (R$)')
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -491,7 +491,7 @@ def main():
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('resultado_tcc_otimizado.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'./img/resultado_tcc_otimizado_{TICKER}.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     # 13. Salvar resultados detalhados
@@ -505,8 +505,8 @@ def main():
     })
     
     trades_df = pd.DataFrame(trades)
-    results_df.to_csv('resultados_tcc_detalhados.csv', index=False)
-    trades_df.to_csv('trades_detalhados.csv', index=False)
+    results_df.to_csv(f'./csv/trades/resultados_tcc_detalhados{TICKER}.csv', index=False)
+    trades_df.to_csv(f'./csv/trades/trades_detalhados_{TICKER}.csv', index=False)
     
     print(f"\n📊 Resultados salvos em 'resultados_tcc_detalhados.csv'")
     print(f"📋 Trades salvos em 'trades_detalhados.csv'")
