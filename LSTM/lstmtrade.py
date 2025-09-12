@@ -4,7 +4,7 @@ import yfinance as yf
 import pandas_ta as ta
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
 from sklearn.feature_selection import SelectKBest, f_regression
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -20,16 +20,16 @@ plt.rcParams['figure.figsize'] = [15, 10]
 plt.rcParams['font.size'] = 12
 
 # ===================== PARÂMETROS OTIMIZADOS =====================
-TICKER = "PETR4.SA"
+TICKER = "BBAS3.SA"
 TRAIN_START = "2020-01-01"
 TRAIN_END = "2022-12-31"
 TEST_START = "2023-01-01"
 TEST_END = "2023-08-31"
 INITIAL_CAPITAL = 1000.00
-LOOKBACK = 15  # Reduzido para capturar mais padrões de curto prazo
+LOOKBACK = 10  # 
 EPOCHS = 80
-BATCH_SIZE = 16  # Batch menor para melhor aprendizado
-N_FEATURES = 10  # Features mais relevantes
+BATCH_SIZE = 16  # 
+N_FEATURES = 10  # 
 
 # Parâmetros de trading otimizados
 STOP_LOSS_PCT = 0.03  # 3% de stop loss
@@ -39,7 +39,6 @@ RSI_OVERSOLD = 35    # Mais sensível para compra
 
 # ===================== FUNÇÕES OTIMIZADAS =====================
 def download_data(ticker, start_date, end_date):
-    """Baixa dados do Yahoo Finance"""
     print(f"Baixando dados do {ticker}...")
     try:
         raw = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
@@ -49,7 +48,6 @@ def download_data(ticker, start_date, end_date):
         return None
 
 def calculate_enhanced_indicators(df):
-    """Calcula indicadores técnicos avançados para trading"""
     print("Calculando indicadores técnicos avançados...")
     
     # Preços e volume
@@ -119,14 +117,13 @@ def select_optimized_features(train_df, n_features=N_FEATURES):
     
     selected_features = feature_scores['feature'].head(n_features).tolist()
     
-    print("📊 Melhores features selecionadas (ordenadas por importância):")
+    print("Melhor feature")
     for i, feat in enumerate(selected_features, 1):
         print(f"   {i}. {feat} (score: {feature_scores[feature_scores['feature'] == feat]['score'].values[0]:.2f})")
     
     return selected_features
 
 def prepare_optimized_data(train_df, test_df, features, lookback=LOOKBACK):
-    """Preparação de dados otimizada"""
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
     
@@ -138,7 +135,6 @@ def prepare_optimized_data(train_df, test_df, features, lookback=LOOKBACK):
     X_test_scaled = scaler_x.transform(test_df[features])
     y_test_scaled = scaler_y.transform(test_df[['close']])
     
-    # Criar sequências com overlap para mais dados
     def create_sequences(X, y, lookback):
         X_seq, y_seq = [], []
         for i in range(lookback, len(X)):
@@ -165,7 +161,7 @@ def create_enhanced_model(input_shape):
     ])
     
     model.compile(
-        optimizer=Adam(learning_rate=0.0008),  # Learning rate menor
+        optimizer=Adam(learning_rate=0.0008),  
         loss='mse',
         metrics=['mae']
     )
@@ -194,31 +190,41 @@ def generate_enhanced_signals(df, predictions, dates):
         signal = 'HOLD'
         
         if current_position == 0:  # Fora do mercado
-            # Condições de COMPRA otimizadas
+            # Condições de COMPRA 
             buy_conditions = [
-                prediction_tomorrow > price_today * 1.015,  # Previsão > 1.5%
-                rsi < RSI_OVERSOLD,                         # RSI não sobrevendido
-                macd > macd_signal,                         # MACD positivo
-                bb_pct < 0.8,                               # Não no topo da Bollinger
-                volume_ratio > 0.8                          # Volume acima da média
+                prediction_tomorrow > price_today * 1.015,  
+                rsi < RSI_OVERSOLD,                        
+                macd > macd_signal,                         
+                bb_pct < 0.8,                               
+                volume_ratio > 0.8                         
             ]
-            
+            # Previsão > 1.5%
+             # RSI não sobrevendido
+             # MACD positivo
+             # Não no topo da Bollinger
+              # Volume acima da média
+              
             if sum(buy_conditions) >= 3:  # Pelo menos 3 condições
                 signal = 'BUY'
                 current_position = 1
                 entry_price = price_today
                 
         else:  # Comprado
-            # Condições de VENDA otimizadas
+            # Condições de VENDA 
             sell_conditions = [
-                prediction_tomorrow < price_today * 0.995,  # Previsão < -0.5%
-                rsi > RSI_OVERBOUGHT,                       # RSI sobrecomprado
-                macd < macd_signal,                         # MACD negativo
-                bb_pct > 0.8,                               # Topo da Bollinger
-                price_today >= entry_price * (1 + TAKE_PROFIT_PCT),  # Take profit
-                price_today <= entry_price * (1 - STOP_LOSS_PCT)     # Stop loss
+                prediction_tomorrow < price_today * 0.995, 
+                rsi > RSI_OVERBOUGHT,                       
+                macd < macd_signal,                        
+                bb_pct > 0.8,                               
+                price_today >= entry_price * (1 + TAKE_PROFIT_PCT), 
+                price_today <= entry_price * (1 - STOP_LOSS_PCT)    
             ]
-            
+            # Previsão < -0.5%
+            # RSI sobrecomprado
+            # MACD negativo
+            # Topo da Bollinger
+            # Take profit
+            # Stop loss
             if sum(sell_conditions) >= 2:  # Pelo menos 2 condições
                 signal = 'SELL'
                 current_position = 0
@@ -245,7 +251,7 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
         current_date = dates[i]
         current_price = df.loc[current_date, 'close']
         
-        # Verificar stop loss e take profit para trades ativos
+        #-----------STOP LOSS-----------------
         if trade_active and shares > 0:
             # Stop Loss
             if current_price <= entry_price * (1 - STOP_LOSS_PCT):
@@ -260,7 +266,7 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
                     'return_pct': (current_price / entry_price - 1) * 100
                 })
             
-            # Take Profit  
+            # ------------------Take Profit  -----------------
             elif current_price >= entry_price * (1 + TAKE_PROFIT_PCT):
                 capital = shares * current_price
                 shares = 0
@@ -273,7 +279,7 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
                     'return_pct': (current_price / entry_price - 1) * 100
                 })
         
-        # Executar sinais
+        # ----------------- SINAL DE COMPRA -------------------------
         if signal == 'BUY' and capital > 0 and not trade_active:
             shares = capital / current_price
             capital = 0
@@ -285,7 +291,7 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
                 'price': current_price, 
                 'shares': shares
             })
-            
+        # ----------------- SINAL DE VENDA -------------------------  
         elif signal == 'SELL' and shares > 0 and trade_active:
             capital = shares * current_price
             shares = 0
@@ -298,7 +304,6 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
                 'return_pct': (current_price / entry_price - 1) * 100
             })
         
-        # Calcular valor do portfólio
         portfolio_value = capital + (shares * current_price if shares > 0 else 0)
         equity_curve.append(portfolio_value)
     
@@ -316,8 +321,22 @@ def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPIT
     
     return equity_curve, trades, capital
 
-def calculate_detailed_metrics(equity_curve, initial_capital, trades, test_dates):
-    """Métricas detalhadas de performance"""
+def calculate_regression_metrics(y_true, y_pred):
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_true, y_pred)
+    mape = mean_absolute_percentage_error(y_true, y_pred) * 100  # Convertendo para porcentagem
+    r2 = r2_score(y_true, y_pred)
+    
+    return {
+        'MSE': mse,
+        'RMSE': rmse,
+        'MAE': mae,
+        'MAPE': mape,
+        'R²': r2
+    }
+
+def calculate_detailed_metrics(equity_curve, initial_capital, trades, test_dates, y_true, y_pred):
     final_value = equity_curve[-1]
     total_return = (final_value - initial_capital) / initial_capital * 100
     
@@ -341,6 +360,9 @@ def calculate_detailed_metrics(equity_curve, initial_capital, trades, test_dates
     avg_loss = np.mean([t['return_pct'] for t in losing_trades]) if losing_trades else 0
     win_rate = len(winning_trades) / len(trades) if trades else 0
     
+    # Métricas de regressão
+    regression_metrics = calculate_regression_metrics(y_true, y_pred)
+    
     return {
         'final_value': final_value,
         'total_return': total_return,
@@ -351,7 +373,8 @@ def calculate_detailed_metrics(equity_curve, initial_capital, trades, test_dates
         'win_rate': win_rate,
         'avg_win': avg_win,
         'avg_loss': avg_loss,
-        'profit_factor': abs(avg_win * len(winning_trades) / (avg_loss * len(losing_trades))) if losing_trades else float('inf')
+        'profit_factor': abs(avg_win * len(winning_trades) / (avg_loss * len(losing_trades))) if losing_trades else float('inf'),
+        **regression_metrics  # Inclui todas as métricas de regressão
     }
 
 # ===================== EXECUÇÃO PRINCIPAL OTIMIZADA =====================
@@ -391,7 +414,7 @@ def main():
     X_train, X_test, y_train, y_test, scaler_x, scaler_y = prepare_optimized_data(train_df, test_df, features)
     
     # 6. Criar e treinar modelo
-    print("5. Treinando modelo LSTM otimizado...")
+    print("5. Treinando modelo LSTM ...")
     model = create_enhanced_model((X_train.shape[1], X_train.shape[2]))
     
     history = model.fit(
@@ -415,40 +438,42 @@ def main():
     signals, positions = generate_enhanced_signals(test_df, y_pred, test_dates)
     
     # 9. Backtest com gestão de risco
-    print("7. Executando backtest avançado...")
+    print("7. Executando backtest ...")
     equity_curve, trades, final_portfolio = backtest_enhanced_strategy(test_df, test_dates, signals, INITIAL_CAPITAL)
     
     # 10. Calcular métricas detalhadas
-    metrics = calculate_detailed_metrics(equity_curve, INITIAL_CAPITAL, trades, test_dates)
+    metrics = calculate_detailed_metrics(equity_curve, INITIAL_CAPITAL, trades, test_dates, y_actual, y_pred)
     
     # ===================== RESULTADOS DETALHADOS =====================
     print("\n" + "="*70)
-    print("RESULTADOS DO BACKTEST AVANÇADO - 8 MESES")
+    print("RESULTADOS DO BACKTEST  - 8 MESES")
     print("="*70)
-    print(f"💰 Capital inicial: R$ {INITIAL_CAPITAL:,.2f}")
-    print(f"💰 Capital final: R$ {metrics['final_value']:,.2f}")
-    print(f"📈 Retorno total: {metrics['total_return']:+.2f}%")
-    print(f"📊 Buy & Hold: {metrics['buy_hold_return']:+.2f}%")
-    print(f"🔻 Max Drawdown: {metrics['max_drawdown']:.2f}%")
-    print(f"🎯 Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-    print(f"🔄 Número de trades: {metrics['num_trades']}")
-    print(f"✅ Taxa de acerto: {metrics['win_rate']:.2%}")
-    print(f"📈 Retorno médio por trade: {metrics['avg_win']:+.2f}%")
-    print(f"📉 Prejuízo médio por trade: {metrics['avg_loss']:.2f}%")
-    print(f"📊 Profit Factor: {metrics['profit_factor']:.2f}")
+    print(f"$ Capital inicial: R$ {INITIAL_CAPITAL:,.2f}")
+    print(f"$ Capital final: R$ {metrics['final_value']:,.2f}")
+    print(f"= Retorno total: {metrics['total_return']:+.2f}%")
+    print(f"= Buy & Hold: {metrics['buy_hold_return']:+.2f}%")
+    print(f"< Max Drawdown: {metrics['max_drawdown']:.2f}%")
+    print(f"> Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
+    print(f"+- Número de trades: {metrics['num_trades']}")
+    print(f"OK Taxa de acerto: {metrics['win_rate']:.2%}")
+    print(f"=/ Retorno médio por trade: {metrics['avg_win']:+.2f}%")
+    print(f"-/ Prejuízo médio por trade: {metrics['avg_loss']:.2f}%")
+    print(f"fator de ganho: {metrics['profit_factor']:.2f}")
     
-    # 11. Análise dos trades
-    if trades:
-        print(f"\n📋 Detalhes dos trades:")
-        for i, trade in enumerate(trades[-5:], 1):  # Mostrar últimos 5 trades
-            if 'return_pct' in trade:
-                print(f"   Trade {i}: {trade['action']} - {trade['return_pct']:+.2f}%")
+    # Métricas de regressão
+    print("\n" + "="*70)
+    print("MÉTRICAS DE REGRESSÃO - QUALIDADE DAS PREVISÕES")
+    print("="*70)
+    print(f"MAE (Erro Absoluto Médio): R$ {metrics['MAE']:.2f}")
+    print(f"MAPE (Erro Percentual Absoluto Médio): {metrics['MAPE']:.2f}%")
+    print(f"MSE (Erro Quadrático Médio): {metrics['MSE']:.2f}")
+    print(f"RMSE (Raiz do Erro Quadrático Médio): R$ {metrics['RMSE']:.2f}")
     
     # 12. Plotar resultados
-    plt.figure(figsize=(15, 12))
+    plt.figure(figsize=(15, 15))
     
     # Preços e previsões
-    plt.subplot(3, 1, 1)
+    plt.subplot(4, 1, 1)
     plt.plot(test_dates, y_actual, label='Preço Real', linewidth=2, color='blue')
     plt.plot(test_dates, y_pred, label='Preço Previsto', linewidth=2, color='red', linestyle='--')
     
@@ -471,7 +496,7 @@ def main():
     plt.xticks(rotation=45)
     
     # Equity curve
-    plt.subplot(3, 1, 2)
+    plt.subplot(4, 1, 2)
     plt.plot(range(len(equity_curve)), equity_curve, label='Estratégia LSTM', linewidth=2, color='green')
     plt.axhline(y=INITIAL_CAPITAL, color='red', linestyle='--', label='Capital Inicial')
     plt.title('Evolução do Capital')
@@ -480,7 +505,7 @@ def main():
     plt.grid(True, alpha=0.3)
     
     # Drawdown
-    plt.subplot(3, 1, 3)
+    plt.subplot(4, 1, 3)
     peak = np.maximum.accumulate(equity_curve)
     drawdown = (peak - equity_curve) / peak * 100
     plt.fill_between(range(len(drawdown)), drawdown, 0, alpha=0.3, color='red')
@@ -488,6 +513,17 @@ def main():
     plt.title('Drawdown Máximo')
     plt.xlabel('Dias')
     plt.ylabel('Drawdown (%)')
+    plt.grid(True, alpha=0.3)
+    
+    # Erros de previsão
+    plt.subplot(4, 1, 4)
+    errors = y_actual - y_pred
+    plt.plot(test_dates, errors, color='purple', linewidth=1)
+    plt.axhline(y=0, color='red', linestyle='--')
+    plt.fill_between(test_dates, errors, 0, alpha=0.3, color='purple')
+    plt.title('Erros de Previsão (Real - Previsto)')
+    plt.xlabel('Data')
+    plt.ylabel('Erro (R$)')
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
@@ -499,6 +535,8 @@ def main():
         'Data': test_dates[:len(signals)],
         'Preço_Real': y_actual[:len(signals)],
         'Preço_Previsto': y_pred[:len(signals)],
+        'Erro_Absoluto': np.abs(y_actual[:len(signals)] - y_pred[:len(signals)]),
+        'Erro_Percentual': (np.abs(y_actual[:len(signals)] - y_pred[:len(signals)]) / y_actual[:len(signals)]) * 100,
         'Sinal': signals,
         'Posição': positions[:len(signals)],
         'Capital_Acumulado': equity_curve[1:len(signals)+1]
@@ -508,30 +546,33 @@ def main():
     results_df.to_csv(f'./csv/trades/resultados_tcc_detalhados{TICKER}.csv', index=False)
     trades_df.to_csv(f'./csv/trades/trades_detalhados_{TICKER}.csv', index=False)
     
-    print(f"\n📊 Resultados salvos em 'resultados_tcc_detalhados.csv'")
-    print(f"📋 Trades salvos em 'trades_detalhados.csv'")
+    print(f"\n salvo em 'resultados_tcc_detalhados.csv'")
+    print(f" Trades salvo em 'trades_detalhados.csv'")
     
     # Análise final
     print("\n" + "="*70)
-    print("ANÁLISE FINAL DO TCC - SISTEMA OTIMIZADO")
+    print("ANÁLISE DAS MÉTRICAS DE REGRESSÃO")
     print("="*70)
     
+    # Interpretação das métricas de regressão
+    print("MAE (Mean Absolute Error):")
+    print("  - Erro médio absoluto em reais")
+    print(f"  - O modelo erra em média R$ {metrics['MAE']:.2f} por previsão")
+    
+    print("\nMAPE (Mean Absolute Percentage Error):")
+    print("  - Erro percentual médio absoluto")
+    print(f"  - O modelo erra em média {metrics['MAPE']:.2f}% por previsão")
+    
+    # print("\nR² (Coeficiente de Determinação):")
+    # print("  - Proporção da variância explicada pelo modelo")
+    # print(f"  - {metrics['R²']:.1%} da variância dos preços é explicada pelo modelo")
+    
     if metrics['total_return'] > metrics['buy_hold_return']:
-        print("🎯 SUCESSO: Estratégia superou o Buy & Hold!")
-        print(f"   📈 Vantagem: {metrics['total_return'] - metrics['buy_hold_return']:+.2f}%")
+        print("\n✅ Estratégia superou o Buy & Hold!")
+        print(f"   Vantagem: {metrics['total_return'] - metrics['buy_hold_return']:+.2f}%")
     else:
-        print("⚠️  Estratégia não superou o Buy & Hold")
-        print(f"   📉 Diferença: {metrics['total_return'] - metrics['buy_hold_return']:.2f}%")
-    
-    if metrics['win_rate'] > 0.5:
-        print(f"✅ Boa taxa de acerto: {metrics['win_rate']:.2%}")
-    else:
-        print(f"📉 Taxa de acerto precisa melhorar: {metrics['win_rate']:.2%}")
-    
-    if metrics['sharpe_ratio'] > 0.5:
-        print(f"🎯 Bom Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-    
-    print(f"🔒 Gestão de risco eficiente (Drawdown: {metrics['max_drawdown']:.2f}%)")
+        print("\n❌ Estratégia não superou Buy & Hold")
+        print(f"   Diferença: {metrics['total_return'] - metrics['buy_hold_return']:.2f}%")
     
     return metrics, results_df, trades_df
 
@@ -539,8 +580,7 @@ if __name__ == "__main__":
     tf.config.set_visible_devices([], 'GPU')
     try:
         metrics, results, trades = main()
-        print("\n🎓 TCC OTIMIZADO EXECUTADO COM SUCESSO!")
     except Exception as e:
-        print(f"❌ Erro: {e}")
+        print(f"*** Erro: {e}***")
         import traceback
         traceback.print_exc()
