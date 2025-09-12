@@ -14,18 +14,19 @@ from tensorflow.keras.callbacks import EarlyStopping
 import warnings
 warnings.filterwarnings('ignore')
 
-# Configurações
 plt.style.use('ggplot')
 plt.rcParams['figure.figsize'] = [15, 10]
 plt.rcParams['font.size'] = 12
 
 # ===================== PARÂMETROS OTIMIZADOS =====================
-TICKER = "BBAS3.SA"
+TICKER = "MGLU3.SA"
 TRAIN_START = "2020-01-01"
 TRAIN_END = "2022-12-31"
 TEST_START = "2023-01-01"
 TEST_END = "2023-08-31"
 INITIAL_CAPITAL = 1000.00
+#considerar valor da taxas
+#energia, pretoleo, realimentar o agente.
 LOOKBACK = 10  # 
 EPOCHS = 80
 BATCH_SIZE = 16  # 
@@ -83,9 +84,9 @@ def calculate_enhanced_indicators(df):
     df['obv'] = ta.obv(df['close'], df['volume'])
     df['vwap'] = ta.vwap(df['high'], df['low'], df['close'], df['volume'])
     
-    # Novos indicadores
-    df['price_vwap_ratio'] = df['close'] / df['vwap']
-    df['momentum_5'] = df['close'].pct_change(5)
+    # # Novos indicadores
+    # df['price_vwap_ratio'] = df['close'] / df['vwap']
+    # df['momentum_5'] = df['close'].pct_change(5)
     
     df = df.dropna()
     print(f"Indicadores calculados: {len(df.columns)} colunas")
@@ -189,7 +190,7 @@ def generate_enhanced_signals(df, predictions, dates):
         
         signal = 'HOLD'
         
-        if current_position == 0:  # Fora do mercado
+        if current_position == 0: 
             # Condições de COMPRA 
             buy_conditions = [
                 prediction_tomorrow > price_today * 1.015,  
@@ -451,7 +452,7 @@ def main():
     print(f"$ Capital inicial: R$ {INITIAL_CAPITAL:,.2f}")
     print(f"$ Capital final: R$ {metrics['final_value']:,.2f}")
     print(f"= Retorno total: {metrics['total_return']:+.2f}%")
-    print(f"= Buy & Hold: {metrics['buy_hold_return']:+.2f}%")
+    # print(f"= Buy & Hold: {metrics['buy_hold_return']:+.2f}%")
     print(f"< Max Drawdown: {metrics['max_drawdown']:.2f}%")
     print(f"> Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
     print(f"+- Número de trades: {metrics['num_trades']}")
@@ -572,7 +573,6 @@ def main():
         print(f"   Vantagem: {metrics['total_return'] - metrics['buy_hold_return']:+.2f}%")
     else:
         print("\n❌ Estratégia não superou Buy & Hold")
-        print(f"   Diferença: {metrics['total_return'] - metrics['buy_hold_return']:.2f}%")
     
     return metrics, results_df, trades_df
 
