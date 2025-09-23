@@ -27,7 +27,7 @@ TEST_END = "2023-08-31"
 INITIAL_CAPITAL = 1000.00
 #considerar valor da taxas
 #energia, pretoleo, realimentar o agente.
-LOOKBACK = 10  # 
+LOOKBACK = 50  # 
 EPOCHS = 80
 BATCH_SIZE = 16  # 
 N_FEATURES = 10  # 
