@@ -4,67 +4,65 @@ import yfinance as yf
 import pandas_ta as ta
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
-from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error, r2_score
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import warnings
 warnings.filterwarnings('ignore')
 
+# ===================== CONFIGURAÇÕES COM TAXAS =====================
 plt.style.use('ggplot')
 plt.rcParams['figure.figsize'] = [15, 10]
 plt.rcParams['font.size'] = 12
 
-# ===================== PARÂMETROS OTIMIZADOS =====================
-TICKER = "MGLU3.SA"
+TICKER = "PETR4.SA"
 TRAIN_START = "2020-01-01"
-TRAIN_END = "2022-12-31"
-TEST_START = "2023-01-01"
-TEST_END = "2023-08-31"
+TRAIN_END   = "2023-12-31"
+TEST_START  = "2024-01-01"
+TEST_END    = "2024-08-31"
 INITIAL_CAPITAL = 1000.00
-#considerar valor da taxas
-#energia, pretoleo, realimentar o agente.
-LOOKBACK = 50  # 
-EPOCHS = 80
-BATCH_SIZE = 16  # 
-N_FEATURES = 10  # 
+LOOKBACK = 30
+EPOCHS = 100
+BATCH_SIZE = 16
+N_FEATURES = 10
 
-# Parâmetros de trading otimizados
-STOP_LOSS_PCT = 0.03  # 3% de stop loss
-TAKE_PROFIT_PCT = 0.05  # 5% de take profit
-RSI_OVERBOUGHT = 65  # Mais sensível para venda
-RSI_OVERSOLD = 35    # Mais sensível para compra
+STOP_LOSS_PCT = 0.08
+TAKE_PROFIT_PCT = 0.10
 
-# ===================== FUNÇÕES OTIMIZADAS =====================
+# TAXAS DE TRANSAÇÃO REALISTAS PARA AÇÕES BRASILEIRAS
+TAXA_CORRETAGEM = 0.005  # 0.5% por operação (compra ou venda)
+TAXA_EMOLUMENTOS = 0.0005  # 0.05% 
+TAXA_LIQUIDAÇÃO = 0.0002  # 0.02%
+IMPOSTO_DAY_TRADE = 0.20  # 20% para day trade (operaciones no mesmo dia)
+
+# Taxa total por operação (compra + venda = 2 operações)
+TAXA_TOTAL_POR_OPERACAO = TAXA_CORRETAGEM * 2 + TAXA_EMOLUMENTOS * 2 + TAXA_LIQUIDAÇÃO * 2
+
+print(f"Taxa total por trade round-trip: {TAXA_TOTAL_POR_OPERACAO*100:.2f}%")
+
+# ===================== DOWNLOAD =====================
 def download_data(ticker, start_date, end_date):
-    print(f"Baixando dados do {ticker}...")
-    try:
-        raw = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
-        return raw if not raw.empty else None
-    except Exception as e:
-        print(f"Erro: {e}")
-        return None
+    print(f"Baixando dados de {ticker}...")
+    data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
+    return data if not data.empty else None
 
-def calculate_enhanced_indicators(df):
-    print("Calculando indicadores técnicos avançados...")
+# ===================== INDICADORES =====================
+def calculate_indicators(df):
+    df = df.copy()
     
-    # Preços e volume
     df['returns'] = df['close'].pct_change()
     df['log_volume'] = np.log1p(df['volume'])
     df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
     
-    # Tendência
     df['sma_10'] = ta.sma(df['close'], length=10)
     df['sma_20'] = ta.sma(df['close'], length=20)
     df['ema_12'] = ta.ema(df['close'], length=12)
     df['ema_26'] = ta.ema(df['close'], length=26)
     
-    # Momentum
     df['rsi_14'] = ta.rsi(df['close'], length=14)
-    df['rsi_7'] = ta.rsi(df['close'], length=7)  # RSI mais sensível
     
     macd = ta.macd(df['close'])
     if macd is not None:
@@ -72,515 +70,459 @@ def calculate_enhanced_indicators(df):
         df['macd_signal'] = macd.iloc[:, 1]
         df['macd_hist'] = macd.iloc[:, 2]
     
-    # Volatilidade
-    df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
     bb = ta.bbands(df['close'], length=20)
-    if bb is not None:
-        df['bb_upper'] = bb.iloc[:, 0]
-        df['bb_lower'] = bb.iloc[:, 2]
-        df['bb_pct'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+    if bb is not None and len(bb.columns) >= 3:
+        df['bb_upper'] = bb.iloc[:, 2]
+        df['bb_lower'] = bb.iloc[:, 0]
+        df['bb_middle'] = bb.iloc[:, 1]
+        df['bb_pct'] = (df['close'] - bb.iloc[:, 0]) / (bb.iloc[:, 2] - bb.iloc[:, 0])
     
-    # Volume
-    df['obv'] = ta.obv(df['close'], df['volume'])
-    df['vwap'] = ta.vwap(df['high'], df['low'], df['close'], df['volume'])
-    
-    # # Novos indicadores
-    # df['price_vwap_ratio'] = df['close'] / df['vwap']
-    # df['momentum_5'] = df['close'].pct_change(5)
+    df['atr_14'] = ta.atr(df['high'], df['low'], df['close'], length=14)
     
     df = df.dropna()
-    print(f"Indicadores calculados: {len(df.columns)} colunas")
     return df
 
-def select_optimized_features(train_df, n_features=N_FEATURES):
-    """Seleção mais inteligente de features"""
-    candidate_features = [
-        'open', 'high', 'low', 'log_volume', 'volume_ratio', 'returns',
-        'sma_10', 'sma_20', 'ema_12', 'ema_26', 
-        'rsi_14', 'rsi_7', 'macd', 'macd_signal', 'macd_hist',
-        'atr_14', 'bb_pct', 'obv', 'vwap', 'price_vwap_ratio', 'momentum_5'
-    ]
+# ===================== SELEÇÃO DE FEATURES =====================
+def select_features(train_df, n_features=N_FEATURES):
+    correlation_with_target = train_df.corr()['close'].abs().sort_values(ascending=False)
     
-    available_features = [f for f in candidate_features if f in train_df.columns]
+    features_to_consider = [col for col in correlation_with_target.index 
+                          if col not in ['close', 'open', 'high', 'low']]
     
-    X_train = train_df[available_features].fillna(0)
-    y_train = train_df['close']
+    selected_features = []
+    for feature in features_to_consider:
+        if len(selected_features) < n_features:
+            add_feature = True
+            for selected in selected_features:
+                if abs(train_df[feature].corr(train_df[selected])) > 0.8:
+                    add_feature = False
+                    break
+            if add_feature:
+                selected_features.append(feature)
     
-    selector = SelectKBest(score_func=f_regression, k=min(n_features, len(available_features)))
-    selector.fit(X_train, y_train)
-    
-    # Pegar features com maior importância
-    feature_scores = pd.DataFrame({
-        'feature': available_features,
-        'score': selector.scores_[:len(available_features)]
-    })
-    feature_scores = feature_scores.sort_values('score', ascending=False)
-    
-    selected_features = feature_scores['feature'].head(n_features).tolist()
-    
-    print("Melhor feature")
-    for i, feat in enumerate(selected_features, 1):
-        print(f"   {i}. {feat} (score: {feature_scores[feature_scores['feature'] == feat]['score'].values[0]:.2f})")
-    
+    print("Features selecionadas:", selected_features)
     return selected_features
 
-def prepare_optimized_data(train_df, test_df, features, lookback=LOOKBACK):
-    scaler_x = StandardScaler()
-    scaler_y = StandardScaler()
+# ===================== PREPARAÇÃO =====================
+def prepare_data(train_df, test_df, features, lookback=LOOKBACK):
+    scaler_x_train = StandardScaler()
+    scaler_y_train = StandardScaler()
     
-    # Treino
-    X_train_scaled = scaler_x.fit_transform(train_df[features])
-    y_train_scaled = scaler_y.fit_transform(train_df[['close']])
+    X_train_scaled = scaler_x_train.fit_transform(train_df[features])
+    y_train_scaled = scaler_y_train.fit_transform(train_df[['close']])
     
-    # Teste
-    X_test_scaled = scaler_x.transform(test_df[features])
-    y_test_scaled = scaler_y.transform(test_df[['close']])
-    
+    X_test_scaled = scaler_x_train.transform(test_df[features])
+    y_test_scaled = scaler_y_train.transform(test_df[['close']])
+
     def create_sequences(X, y, lookback):
         X_seq, y_seq = [], []
         for i in range(lookback, len(X)):
             X_seq.append(X[i-lookback:i])
             y_seq.append(y[i])
         return np.array(X_seq), np.array(y_seq)
-    
+
     X_train, y_train = create_sequences(X_train_scaled, y_train_scaled, lookback)
     X_test, y_test = create_sequences(X_test_scaled, y_test_scaled, lookback)
-    
-    print(f"Treino: {X_train.shape}, Teste: {X_test.shape}")
-    return X_train, X_test, y_train, y_test, scaler_x, scaler_y
 
-def create_enhanced_model(input_shape):
-    """Modelo LSTM otimizado"""
+    return X_train, X_test, y_train, y_test, scaler_y_train
+
+# ===================== MODELO LSTM =====================
+def create_lstm_model(input_shape):
     model = Sequential([
-        LSTM(48, return_sequences=True, input_shape=input_shape, 
-             kernel_regularizer=tf.keras.regularizers.l2(0.001)),
-        Dropout(0.35),
-        LSTM(24, kernel_regularizer=tf.keras.regularizers.l2(0.001)),
-        Dropout(0.25),
-        Dense(12, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+        LSTM(64, return_sequences=True, input_shape=input_shape),
+        BatchNormalization(),
+        Dropout(0.2),
+        
+        LSTM(32, return_sequences=True),
+        BatchNormalization(),
+        Dropout(0.2),
+        
+        LSTM(16, return_sequences=False),
+        BatchNormalization(),
+        Dropout(0.2),
+
+        Dense(32, activation='relu'),
+        Dropout(0.1),
+        Dense(16, activation='relu'),
         Dense(1)
     ])
     
-    model.compile(
-        optimizer=Adam(learning_rate=0.0008),  
-        loss='mse',
-        metrics=['mae']
-    )
+    model.compile(optimizer=Adam(learning_rate=0.0005), loss='mse', metrics=['mae'])
     return model
 
-# ===================== ESTRATÉGIA DE TRADING OTIMIZADA =====================
-def generate_enhanced_signals(df, predictions, dates):
-    """Geração de sinais com múltiplos filtros"""
-    signals = ['HOLD']  # Primeiro dia sempre hold
-    positions = [0]
-    current_position = 0
-    entry_price = 0
-    
-    for i in range(1, len(predictions)):
-        current_date = dates[i]
-        price_today = df.loc[current_date, 'close']
-        prediction_tomorrow = predictions[i]
-        
-        # Indicadores para filtragem
-        rsi = df.loc[current_date, 'rsi_14']
-        macd = df.loc[current_date, 'macd']
-        macd_signal = df.loc[current_date, 'macd_signal']
-        bb_pct = df.loc[current_date, 'bb_pct'] if 'bb_pct' in df.columns else 0.5
-        volume_ratio = df.loc[current_date, 'volume_ratio']
-        
-        signal = 'HOLD'
-        
-        if current_position == 0: 
-            # Condições de COMPRA 
-            buy_conditions = [
-                prediction_tomorrow > price_today * 1.015,  
-                rsi < RSI_OVERSOLD,                        
-                macd > macd_signal,                         
-                bb_pct < 0.8,                               
-                volume_ratio > 0.8                         
-            ]
-            # Previsão > 1.5%
-             # RSI não sobrevendido
-             # MACD positivo
-             # Não no topo da Bollinger
-              # Volume acima da média
-              
-            if sum(buy_conditions) >= 3:  # Pelo menos 3 condições
-                signal = 'BUY'
-                current_position = 1
-                entry_price = price_today
-                
-        else:  # Comprado
-            # Condições de VENDA 
-            sell_conditions = [
-                prediction_tomorrow < price_today * 0.995, 
-                rsi > RSI_OVERBOUGHT,                       
-                macd < macd_signal,                        
-                bb_pct > 0.8,                               
-                price_today >= entry_price * (1 + TAKE_PROFIT_PCT), 
-                price_today <= entry_price * (1 - STOP_LOSS_PCT)    
-            ]
-            # Previsão < -0.5%
-            # RSI sobrecomprado
-            # MACD negativo
-            # Topo da Bollinger
-            # Take profit
-            # Stop loss
-            if sum(sell_conditions) >= 2:  # Pelo menos 2 condições
-                signal = 'SELL'
-                current_position = 0
-                entry_price = 0
-        
-        signals.append(signal)
-        positions.append(current_position)
-    
-    return signals, positions
+# ===================== BACKTEST COM TAXAS =====================
+def aplicar_taxas_compra(valor_compra):
+    """Aplica taxas na operação de compra"""
+    taxas_compra = TAXA_CORRETAGEM + TAXA_EMOLUMENTOS + TAXA_LIQUIDAÇÃO
+    return valor_compra * (1 + taxas_compra)
 
-def backtest_enhanced_strategy(df, dates, signals, initial_capital=INITIAL_CAPITAL):
-    """Backtest com gestão de risco completa"""
+def aplicar_taxas_venda(valor_venda, lucro_operacao, eh_day_trade):
+    """Aplica taxas na operação de venda e impostos"""
+    taxas_venda = TAXA_CORRETAGEM + TAXA_EMOLUMENTOS + TAXA_LIQUIDAÇÃO
+    
+    # Aplica taxas de venda
+    valor_liquido = valor_venda * (1 - taxas_venda)
+    
+    # Aplica impostos se houver lucro
+    if lucro_operacao > 0:
+        if eh_day_trade:
+            # Day trade: 20% sobre o lucro
+            imposto = lucro_operacao * IMPOSTO_DAY_TRADE
+        else:
+            # Swing trade: isento até R$20k/mês (vamos considerar isento para simplificar)
+            imposto = 0
+        
+        valor_liquido -= imposto
+    
+    return max(valor_liquido, 0)  # Não pode ser negativo
+
+def backtest_strategy_com_taxas(df, dates, y_pred, initial_capital=INITIAL_CAPITAL):
     capital = initial_capital
     shares = 0
     entry_price = 0
+    entry_date = None
     trades = []
     equity_curve = [capital]
     trade_active = False
+    in_position_days = 0
+    max_position_days = 10
     
-    for i, signal in enumerate(signals):
-        if i >= len(dates):
+    total_taxas_pagas = 0
+    total_impostos_pagos = 0
+
+    for i, current_date in enumerate(dates):
+        if current_date not in df.index:
             continue
             
-        current_date = dates[i]
         current_price = df.loc[current_date, 'close']
+        predicted_price = y_pred[i]
+
+        signal = "HOLD"
         
-        #-----------STOP LOSS-----------------
-        if trade_active and shares > 0:
-            # Stop Loss
-            if current_price <= entry_price * (1 - STOP_LOSS_PCT):
-                capital = shares * current_price
-                shares = 0
-                trade_active = False
-                trades.append({
-                    'date': current_date, 
-                    'action': 'SELL (SL)', 
-                    'price': current_price, 
-                    'capital': capital,
-                    'return_pct': (current_price / entry_price - 1) * 100
-                })
+        if not trade_active:
+            # AJUSTE: Condição de compra mais sensível
+            if predicted_price > current_price * 1.01:  # Reduzido de 1.02 para 1.01
+                signal = "BUY"
+        else:
+            in_position_days += 1
+            stop_loss_condition = current_price <= entry_price * (1 - STOP_LOSS_PCT)
+            take_profit_condition = current_price >= entry_price * (1 + TAKE_PROFIT_PCT)
+            time_exit_condition = in_position_days >= max_position_days
+            prediction_exit_condition = predicted_price < current_price * 0.99  # Ajustado
             
-            # ------------------Take Profit  -----------------
-            elif current_price >= entry_price * (1 + TAKE_PROFIT_PCT):
-                capital = shares * current_price
-                shares = 0
-                trade_active = False
+            if stop_loss_condition or take_profit_condition or time_exit_condition or prediction_exit_condition:
+                signal = "SELL"
+
+        if signal == "BUY" and capital > 0:
+            # COMPRA COM TAXAS
+            valor_compra = capital
+            valor_pos_taxas = aplicar_taxas_compra(valor_compra)
+            taxas_compra = valor_compra - valor_pos_taxas
+            
+            if valor_pos_taxas > 0:
+                shares = valor_pos_taxas / current_price
+                capital = 0
+                entry_price = current_price
+                entry_date = current_date
+                trade_active = True
+                in_position_days = 0
+                
                 trades.append({
-                    'date': current_date, 
-                    'action': 'SELL (TP)', 
-                    'price': current_price, 
-                    'capital': capital,
-                    'return_pct': (current_price / entry_price - 1) * 100
+                    "date": current_date, 
+                    "action": "BUY", 
+                    "price": current_price,
+                    "shares": shares,
+                    "taxas": taxas_compra,
+                    "valor_total": valor_compra
                 })
-        
-        # ----------------- SINAL DE COMPRA -------------------------
-        if signal == 'BUY' and capital > 0 and not trade_active:
-            shares = capital / current_price
-            capital = 0
-            entry_price = current_price
-            trade_active = True
+                total_taxas_pagas += taxas_compra
+                
+        elif signal == "SELL" and shares > 0:
+            # VENDA COM TAXAS E IMPOSTOS
+            valor_venda_bruto = shares * current_price
+            lucro_operacao = valor_venda_bruto - (shares * entry_price)
+            
+            # Verifica se é day trade
+            eh_day_trade = (entry_date == current_date)
+            
+            valor_liquido = aplicar_taxas_venda(
+                valor_venda_bruto, 
+                lucro_operacao, 
+                eh_day_trade
+            )
+            
+            taxas_venda = valor_venda_bruto - valor_liquido
+            capital = valor_liquido
+            
             trades.append({
-                'date': current_date, 
-                'action': 'BUY', 
-                'price': current_price, 
-                'shares': shares
+                "date": current_date, 
+                "action": "SELL", 
+                "price": current_price,
+                "shares": shares,
+                "return_pct": (current_price / entry_price - 1) * 100,
+                "entry_price": entry_price,
+                "taxas": taxas_venda,
+                "eh_day_trade": eh_day_trade,
+                "lucro_bruto": lucro_operacao,
+                "valor_liquido": valor_liquido
             })
-        # ----------------- SINAL DE VENDA -------------------------  
-        elif signal == 'SELL' and shares > 0 and trade_active:
-            capital = shares * current_price
+            
+            total_taxas_pagas += taxas_venda
+            if lucro_operacao > 0 and eh_day_trade:
+                total_impostos_pagos += lucro_operacao * IMPOSTO_DAY_TRADE
+            
             shares = 0
             trade_active = False
-            trades.append({
-                'date': current_date, 
-                'action': 'SELL', 
-                'price': current_price, 
-                'capital': capital,
-                'return_pct': (current_price / entry_price - 1) * 100
-            })
-        
+            in_position_days = 0
+
         portfolio_value = capital + (shares * current_price if shares > 0 else 0)
         equity_curve.append(portfolio_value)
-    
-    # Fechar posição aberta no final
-    if shares > 0:
-        final_price = df['close'].iloc[-1]
-        capital = shares * final_price
-        trades.append({
-            'date': dates[-1], 
-            'action': 'SELL (FINAL)', 
-            'price': final_price, 
-            'capital': capital,
-            'return_pct': (final_price / entry_price - 1) * 100
-        })
-    
-    return equity_curve, trades, capital
 
-def calculate_regression_metrics(y_true, y_pred):
-    mse = mean_squared_error(y_true, y_pred)
-    rmse = np.sqrt(mse)
-    mae = mean_absolute_error(y_true, y_pred)
-    mape = mean_absolute_percentage_error(y_true, y_pred) * 100  # Convertendo para porcentagem
-    r2 = r2_score(y_true, y_pred)
+    # Fechar posição aberta no final com taxas
+    if trade_active and len(dates) > 0:
+        last_date = dates[-1]
+        if last_date in df.index:
+            last_price = df.loc[last_date, 'close']
+            valor_venda_bruto = shares * last_price
+            lucro_operacao = valor_venda_bruto - (shares * entry_price)
+            eh_day_trade = (entry_date == last_date)
+            
+            valor_liquido = aplicar_taxas_venda(
+                valor_venda_bruto, 
+                lucro_operacao, 
+                eh_day_trade
+            )
+            
+            taxas_venda = valor_venda_bruto - valor_liquido
+            capital = valor_liquido
+            
+            trades.append({
+                "date": last_date, 
+                "action": "SELL", 
+                "price": last_price,
+                "return_pct": (last_price / entry_price - 1) * 100,
+                "entry_price": entry_price,
+                "taxas": taxas_venda,
+                "eh_day_trade": eh_day_trade,
+                "lucro_bruto": lucro_operacao,
+                "valor_liquido": valor_liquido
+            })
+            
+            total_taxas_pagas += taxas_venda
+            if lucro_operacao > 0 and eh_day_trade:
+                total_impostos_pagos += lucro_operacao * IMPOSTO_DAY_TRADE
+
+    return equity_curve, trades, capital, total_taxas_pagas, total_impostos_pagos
+
+# ===================== ANÁLISE DE TRADES CORRIGIDA =====================
+def analyze_trades(trades):
+    if len(trades) < 2:
+        return {
+            "total_trades": 0, 
+            "win_rate": 0, 
+            "avg_profit_bruto": 0,
+            "avg_profit_liquido": 0,
+            "total_taxas_pagas": 0,
+            "trades": []
+        }
+    
+    trade_results = []
+    winning_trades = 0
+    total_taxas = 0
+    
+    for i in range(0, len(trades)-1, 2):
+        if trades[i]['action'] == 'BUY' and trades[i+1]['action'] == 'SELL':
+            buy_trade = trades[i]
+            sell_trade = trades[i+1]
+            
+            ret_liquido = sell_trade['return_pct']
+            taxas_operacao = buy_trade.get('taxas', 0) + sell_trade.get('taxas', 0)
+            
+            trade_results.append({
+                'retorno_bruto': sell_trade['return_pct'],
+                'retorno_liquido': ret_liquido,
+                'taxas': taxas_operacao,
+                'day_trade': sell_trade.get('eh_day_trade', False),
+                'lucro_bruto': sell_trade.get('lucro_bruto', 0)
+            })
+            
+            total_taxas += taxas_operacao
+            if ret_liquido > 0:
+                winning_trades += 1
+    
+    if trade_results:
+        win_rate = (winning_trades / len(trade_results)) * 100
+        avg_profit_bruto = np.mean([t['retorno_bruto'] for t in trade_results])
+        avg_profit_liquido = np.mean([t['retorno_liquido'] for t in trade_results])
+        
+        return {
+            "total_trades": len(trade_results),
+            "win_rate": win_rate,
+            "avg_profit_bruto": avg_profit_bruto,
+            "avg_profit_liquido": avg_profit_liquido,
+            "total_taxas_pagas": total_taxas,
+            "trades": trade_results
+        }
     
     return {
-        'MSE': mse,
-        'RMSE': rmse,
-        'MAE': mae,
-        'MAPE': mape,
-        'R²': r2
+        "total_trades": 0, 
+        "win_rate": 0, 
+        "avg_profit_bruto": 0,
+        "avg_profit_liquido": 0,
+        "total_taxas_pagas": 0,
+        "trades": []
     }
 
-def calculate_detailed_metrics(equity_curve, initial_capital, trades, test_dates, y_true, y_pred):
-    final_value = equity_curve[-1]
-    total_return = (final_value - initial_capital) / initial_capital * 100
-    
-    # Buy & Hold
-    buy_hold_return = (equity_curve[-1] / initial_capital - 1) * 100
-    
-    # Drawdown
-    peak = np.maximum.accumulate(equity_curve)
-    drawdown = (peak - equity_curve) / peak * 100
-    max_drawdown = np.max(drawdown) if len(drawdown) > 0 else 0
-    
-    # Sharpe ratio
-    daily_returns = np.diff(equity_curve) / equity_curve[:-1]
-    sharpe_ratio = np.mean(daily_returns) / np.std(daily_returns) * np.sqrt(252) if len(daily_returns) > 1 and np.std(daily_returns) > 0 else 0
-    
-    # Estatísticas dos trades
-    winning_trades = [t for t in trades if 'return_pct' in t and t['return_pct'] > 0]
-    losing_trades = [t for t in trades if 'return_pct' in t and t['return_pct'] <= 0]
-    
-    avg_win = np.mean([t['return_pct'] for t in winning_trades]) if winning_trades else 0
-    avg_loss = np.mean([t['return_pct'] for t in losing_trades]) if losing_trades else 0
-    win_rate = len(winning_trades) / len(trades) if trades else 0
-    
-    # Métricas de regressão
-    regression_metrics = calculate_regression_metrics(y_true, y_pred)
-    
-    return {
-        'final_value': final_value,
-        'total_return': total_return,
-        'buy_hold_return': buy_hold_return,
-        'max_drawdown': max_drawdown,
-        'sharpe_ratio': sharpe_ratio,
-        'num_trades': len(trades),
-        'win_rate': win_rate,
-        'avg_win': avg_win,
-        'avg_loss': avg_loss,
-        'profit_factor': abs(avg_win * len(winning_trades) / (avg_loss * len(losing_trades))) if losing_trades else float('inf'),
-        **regression_metrics  # Inclui todas as métricas de regressão
-    }
-
-# ===================== EXECUÇÃO PRINCIPAL OTIMIZADA =====================
+# ===================== MAIN =====================
 def main():
-    print("="*70)
-    print("TCC - SISTEMA DE TRADING AVANÇADO COM LSTM")
-    print("="*70)
-    
-    # 1. Baixar e processar dados
-    print("1. Coletando e processando dados...")
-    full_data = download_data(TICKER, "2019-01-01", TEST_END)
-    if full_data is None:
+    data = download_data(TICKER, "2019-01-01", TEST_END)
+    if data is None:
+        print("Erro ao baixar dados")
         return
     
-    df = full_data[["Open", "High", "Low", "Close", "Volume"]].copy()
-    df.columns = ['open', 'high', 'low', 'close', 'volume']
-    df = df.ffill().dropna()
+    df = data[['Open','High','Low','Close','Volume']].copy()
+    df.columns = ['open','high','low','close','volume']
+    df = calculate_indicators(df)
+
+    train_df = df[(df.index >= TRAIN_START) & (df.index <= TRAIN_END)]
+    test_df = df[(df.index >= TEST_START) & (df.index <= TEST_END)]
     
-    # 2. Calcular indicadores avançados
-    df = calculate_enhanced_indicators(df)
+    if len(train_df) == 0 or len(test_df) == 0:
+        print("Dados de treino ou teste vazios")
+        return
+
+    features = select_features(train_df)
+    X_train, X_test, y_train, y_test, scaler_y = prepare_data(train_df, test_df, features)
+
+    print(f"Shape dos dados de treino: {X_train.shape}")
+    print(f"Shape dos dados de teste: {X_test.shape}")
+
+    model = create_lstm_model((X_train.shape[1], X_train.shape[2]))
     
-    # 3. Dividir dados
-    train_mask = (df.index >= TRAIN_START) & (df.index <= TRAIN_END)
-    test_mask = (df.index >= TEST_START) & (df.index <= TEST_END)
-    
-    train_df = df[train_mask].copy()
-    test_df = df[test_mask].copy()
-    
-    print(f"2. Período de treino: {len(train_df)} dias")
-    print(f"3. Período de teste: {len(test_df)} dias (8 meses)")
-    print(f"4. Capital inicial: R$ {INITIAL_CAPITAL:,.2f}")
-    
-    # 4. Selecionar features otimizadas
-    features = select_optimized_features(train_df)
-    
-    # 5. Preparar dados
-    X_train, X_test, y_train, y_test, scaler_x, scaler_y = prepare_optimized_data(train_df, test_df, features)
-    
-    # 6. Criar e treinar modelo
-    print("5. Treinando modelo LSTM ...")
-    model = create_enhanced_model((X_train.shape[1], X_train.shape[2]))
-    
+    print("Treinando modelo LSTM...")
     history = model.fit(
         X_train, y_train, 
         epochs=EPOCHS, 
         batch_size=BATCH_SIZE,
         validation_data=(X_test, y_test), 
-        verbose=1, 
-        shuffle=False,
-        callbacks=[EarlyStopping(patience=12, restore_best_weights=True)]
+        verbose=1,
+        callbacks=[EarlyStopping(patience=15, restore_best_weights=True)]
     )
-    
-    # 7. Fazer previsões
-    print("6. Gerando previsões...")
-    y_pred_scaled = model.predict(X_test, verbose=0)
+
+    y_pred_scaled = model.predict(X_test)
     y_pred = scaler_y.inverse_transform(y_pred_scaled).flatten()
     y_actual = scaler_y.inverse_transform(y_test).flatten()
-    
-    # 8. Gerar sinais de trading otimizados
     test_dates = test_df.index[LOOKBACK:LOOKBACK + len(y_pred)]
-    signals, positions = generate_enhanced_signals(test_df, y_pred, test_dates)
+
+    # Métricas de Regressão
+    mse = mean_squared_error(y_actual, y_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_actual, y_pred)
+    mape = mean_absolute_percentage_error(y_actual, y_pred) * 100
+    r2 = r2_score(y_actual, y_pred)
+
+    print("\n========== MÉTRICAS DE REGRESSÃO (LSTM) ==========")
+    print(f"MAE : R$ {mae:.2f}")
+    print(f"MAPE: {mape:.2f}%")
+    print(f"MSE : {mse:.2f}")
+    print(f"RMSE: R$ {rmse:.2f}")
+    print(f"R²  : {r2:.4f}")
+
+    # Backtest COM TAXAS
+    equity_curve, trades, final_capital, total_taxas, total_impostos = backtest_strategy_com_taxas(
+        test_df, test_dates, y_pred, INITIAL_CAPITAL
+    )
     
-    # 9. Backtest com gestão de risco
-    print("7. Executando backtest ...")
-    equity_curve, trades, final_portfolio = backtest_enhanced_strategy(test_df, test_dates, signals, INITIAL_CAPITAL)
+    total_return = (final_capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+    buy_hold_return = (test_df['close'].iloc[-1] / test_df['close'].iloc[0] - 1) * 100
+
+    trade_analysis = analyze_trades(trades)
+
+    print("\n========== RESULTADOS DO BACKTEST COM TAXAS ==========")
+    print(f"Capital inicial: R$ {INITIAL_CAPITAL:.2f}")
+    print(f"Capital final:   R$ {final_capital:.2f}")
+    print(f"Retorno líquido: {total_return:+.2f}%")
+    print(f"Buy & Hold:      {buy_hold_return:+.2f}%")
+    print(f"\n--- ESTATÍSTICAS DE TRADING ---")
+    print(f"Nº Trades:           {trade_analysis['total_trades']}")
     
-    # 10. Calcular métricas detalhadas
-    metrics = calculate_detailed_metrics(equity_curve, INITIAL_CAPITAL, trades, test_dates, y_actual, y_pred)
+    # VERIFICAÇÃO SEGURA DAS CHAVES
+    if trade_analysis['total_trades'] > 0:
+        print(f"Win Rate:            {trade_analysis['win_rate']:.1f}%")
+        print(f"Lucro médio bruto:   {trade_analysis['avg_profit_bruto']:.2f}%")
+        print(f"Lucro médio líquido: {trade_analysis['avg_profit_liquido']:.2f}%")
+    else:
+        print(f"Win Rate:            {trade_analysis['win_rate']:.1f}%")
+        print(f"Lucro médio bruto:   {trade_analysis['avg_profit_bruto']:.2f}%")
+        print(f"Lucro médio líquido: {trade_analysis['avg_profit_liquido']:.2f}%")
     
-    # ===================== RESULTADOS DETALHADOS =====================
-    print("\n" + "="*70)
-    print("RESULTADOS DO BACKTEST  - 8 MESES")
-    print("="*70)
-    print(f"$ Capital inicial: R$ {INITIAL_CAPITAL:,.2f}")
-    print(f"$ Capital final: R$ {metrics['final_value']:,.2f}")
-    print(f"= Retorno total: {metrics['total_return']:+.2f}%")
-    # print(f"= Buy & Hold: {metrics['buy_hold_return']:+.2f}%")
-    print(f"< Max Drawdown: {metrics['max_drawdown']:.2f}%")
-    print(f"> Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
-    print(f"+- Número de trades: {metrics['num_trades']}")
-    print(f"OK Taxa de acerto: {metrics['win_rate']:.2%}")
-    print(f"=/ Retorno médio por trade: {metrics['avg_win']:+.2f}%")
-    print(f"-/ Prejuízo médio por trade: {metrics['avg_loss']:.2f}%")
-    print(f"fator de ganho: {metrics['profit_factor']:.2f}")
+    print(f"Total em taxas:      R$ {total_taxas:.2f}")
+    print(f"Total em impostos:   R$ {total_impostos:.2f}")
+    print(f"Taxa total/% capital: {(total_taxas/INITIAL_CAPITAL)*100:.2f}%")
+
+    # DEBUG: Mostrar primeiras previsões vs reais
+    print("\n=== DEBUG: Primeiras previsões ===")
+    for i in range(min(5, len(y_pred))):
+        print(f"Data: {test_dates[i]}, Real: R$ {y_actual[i]:.2f}, Previsto: R$ {y_pred[i]:.2f}, Dif: {((y_pred[i]/y_actual[i])-1)*100:.2f}%")
+
+    # Gráficos
+    plt.figure(figsize=(15, 12))
+
+    plt.subplot(3, 1, 1)
+    plt.plot(test_dates, y_actual, label="Preço Real", color='blue', linewidth=1)
+    plt.plot(test_dates, y_pred, label="Preço Previsto (LSTM)", color='red', linestyle='--', linewidth=1)
     
-    # Métricas de regressão
-    print("\n" + "="*70)
-    print("MÉTRICAS DE REGRESSÃO - QUALIDADE DAS PREVISÕES")
-    print("="*70)
-    print(f"MAE (Erro Absoluto Médio): R$ {metrics['MAE']:.2f}")
-    print(f"MAPE (Erro Percentual Absoluto Médio): {metrics['MAPE']:.2f}%")
-    print(f"MSE (Erro Quadrático Médio): {metrics['MSE']:.2f}")
-    print(f"RMSE (Raiz do Erro Quadrático Médio): R$ {metrics['RMSE']:.2f}")
+    if trades:
+        buy_dates = [t['date'] for t in trades if t['action'] == "BUY"]
+        sell_dates = [t['date'] for t in trades if t['action'] == "SELL"]
+        
+        if buy_dates:
+            buy_prices = [test_df.loc[d, 'close'] for d in buy_dates if d in test_df.index]
+            plt.scatter(buy_dates[:len(buy_prices)], buy_prices, color='green', marker='^', s=80, label="BUY", zorder=5)
+        
+        if sell_dates:
+            sell_prices = [test_df.loc[d, 'close'] for d in sell_dates if d in test_df.index]
+            plt.scatter(sell_dates[:len(sell_prices)], sell_prices, color='orange', marker='v', s=80, label="SELL", zorder=5)
     
-    # 12. Plotar resultados
-    plt.figure(figsize=(15, 15))
-    
-    # Preços e previsões
-    plt.subplot(4, 1, 1)
-    plt.plot(test_dates, y_actual, label='Preço Real', linewidth=2, color='blue')
-    plt.plot(test_dates, y_pred, label='Preço Previsto', linewidth=2, color='red', linestyle='--')
-    
-    # Marcar pontos de compra/venda
-    buy_dates = [test_dates[i] for i, signal in enumerate(signals) if signal == 'BUY' and i < len(test_dates)]
-    sell_dates = [test_dates[i] for i, signal in enumerate(signals) if signal == 'SELL' and i < len(test_dates)]
-    
-    if buy_dates:
-        buy_prices = [test_df.loc[date, 'close'] for date in buy_dates]
-        plt.scatter(buy_dates, buy_prices, color='green', marker='^', s=100, label='Compra', zorder=5)
-    
-    if sell_dates:
-        sell_prices = [test_df.loc[date, 'close'] for date in sell_dates]
-        plt.scatter(sell_dates, sell_prices, color='orange', marker='v', s=100, label='Venda', zorder=5)
-    
-    plt.title(f'{TICKER} - Preços e Sinais de Trading')
-    plt.ylabel('Preço (R$)')
+    plt.title(f"{TICKER} - Preço Real vs Previsto LSTM + Sinais (COM TAXAS)")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.xticks(rotation=45)
+
+    plt.subplot(3, 1, 2)
+    plt.plot(equity_curve, label="Estratégia LSTM (com taxas)", color='green', linewidth=2)
+    plt.axhline(y=INITIAL_CAPITAL, color='red', linestyle='--', label="Capital Inicial")
     
-    # Equity curve
-    plt.subplot(4, 1, 2)
-    plt.plot(range(len(equity_curve)), equity_curve, label='Estratégia LSTM', linewidth=2, color='green')
-    plt.axhline(y=INITIAL_CAPITAL, color='red', linestyle='--', label='Capital Inicial')
-    plt.title('Evolução do Capital')
-    plt.ylabel('Capital (R$)')
+    bh_curve = [INITIAL_CAPITAL * (test_df['close'].iloc[i] / test_df['close'].iloc[0]) 
+                for i in range(len(equity_curve)-1)]
+    plt.plot(bh_curve, label="Buy & Hold", color='blue', linewidth=2)
+    
+    plt.title("Evolução do Capital - LSTM (COM TAXAS)")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    
-    # Drawdown
-    plt.subplot(4, 1, 3)
+
+    plt.subplot(3, 1, 3)
     peak = np.maximum.accumulate(equity_curve)
     drawdown = (peak - equity_curve) / peak * 100
-    plt.fill_between(range(len(drawdown)), drawdown, 0, alpha=0.3, color='red')
+    plt.fill_between(range(len(drawdown)), drawdown, 0, color="red", alpha=0.3)
     plt.plot(drawdown, color='red', linewidth=1)
-    plt.title('Drawdown Máximo')
-    plt.xlabel('Dias')
-    plt.ylabel('Drawdown (%)')
+    plt.title("Drawdown (%) - LSTM (COM TAXAS)")
     plt.grid(True, alpha=0.3)
-    
-    # Erros de previsão
-    plt.subplot(4, 1, 4)
-    errors = y_actual - y_pred
-    plt.plot(test_dates, errors, color='purple', linewidth=1)
-    plt.axhline(y=0, color='red', linestyle='--')
-    plt.fill_between(test_dates, errors, 0, alpha=0.3, color='purple')
-    plt.title('Erros de Previsão (Real - Previsto)')
-    plt.xlabel('Data')
-    plt.ylabel('Erro (R$)')
-    plt.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    plt.savefig(f'./img/resultado_tcc_otimizado_{TICKER}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'resultado_lstm_com_taxas_{TICKER}.png', dpi=300, bbox_inches='tight')
     plt.show()
-    
-    # 13. Salvar resultados detalhados
-    results_df = pd.DataFrame({
-        'Data': test_dates[:len(signals)],
-        'Preço_Real': y_actual[:len(signals)],
-        'Preço_Previsto': y_pred[:len(signals)],
-        'Erro_Absoluto': np.abs(y_actual[:len(signals)] - y_pred[:len(signals)]),
-        'Erro_Percentual': (np.abs(y_actual[:len(signals)] - y_pred[:len(signals)]) / y_actual[:len(signals)]) * 100,
-        'Sinal': signals,
-        'Posição': positions[:len(signals)],
-        'Capital_Acumulado': equity_curve[1:len(signals)+1]
-    })
-    
-    trades_df = pd.DataFrame(trades)
-    results_df.to_csv(f'./csv/trades/resultados_tcc_detalhados{TICKER}.csv', index=False)
-    trades_df.to_csv(f'./csv/trades/trades_detalhados_{TICKER}.csv', index=False)
-    
-    print(f"\n salvo em 'resultados_tcc_detalhados.csv'")
-    print(f" Trades salvo em 'trades_detalhados.csv'")
-    
-    # Análise final
-    print("\n" + "="*70)
-    print("ANÁLISE DAS MÉTRICAS DE REGRESSÃO")
-    print("="*70)
-    
-    # Interpretação das métricas de regressão
-    print("MAE (Mean Absolute Error):")
-    print("  - Erro médio absoluto em reais")
-    print(f"  - O modelo erra em média R$ {metrics['MAE']:.2f} por previsão")
-    
-    print("\nMAPE (Mean Absolute Percentage Error):")
-    print("  - Erro percentual médio absoluto")
-    print(f"  - O modelo erra em média {metrics['MAPE']:.2f}% por previsão")
-    
-    # print("\nR² (Coeficiente de Determinação):")
-    # print("  - Proporção da variância explicada pelo modelo")
-    # print(f"  - {metrics['R²']:.1%} da variância dos preços é explicada pelo modelo")
-    
-    if metrics['total_return'] > metrics['buy_hold_return']:
-        print("\n✅ Estratégia superou o Buy & Hold!")
-        print(f"   Vantagem: {metrics['total_return'] - metrics['buy_hold_return']:+.2f}%")
-    else:
-        print("\n❌ Estratégia não superou Buy & Hold")
-    
-    return metrics, results_df, trades_df
+
+    # Gráfico de perda durante o treinamento
+    plt.figure(figsize=(10, 6))
+    plt.plot(history.history['loss'], label='Perda Treino')
+    plt.plot(history.history['val_loss'], label='Perda Validação')
+    plt.title('Evolução da Perda durante o Treinamento LSTM')
+    plt.xlabel('Época')
+    plt.ylabel('Perda (MSE)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
 
 if __name__ == "__main__":
     tf.config.set_visible_devices([], 'GPU')
-    try:
-        metrics, results, trades = main()
-    except Exception as e:
-        print(f"*** Erro: {e}***")
-        import traceback
-        traceback.print_exc()
+    main()
