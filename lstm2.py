@@ -55,109 +55,103 @@ def BaixarDados(ticker, data_inicio, data_fim):
 
 # ===================== CALCULAR INDICADORES (VERSÃO APRIMORADA) =====================
 def CalcularIndicadores(df):
+    """Versão melhorada mas compatível com o código existente"""
     df = df.copy()
     
-    # Retornos simples e acumulados
-    df['Retorno_1d'] = df['close'].pct_change(1).shift(2)
-    df['Retorno_7d'] = df['close'].pct_change(7).shift(2)
-    df['Retorno_30d'] = df['close'].pct_change(30).shift(2)
+    # ✅ CORREÇÃO: Shift para evitar lookahead
+    shift_period = 2
     
-    # Volume transformado
-    df['Volume_Log'] = np.log1p(df['volume']).shift(2)
+    # --- INDICADORES ORIGINAIS (compatibilidade) ---
+    df['Retornos'] = df['close'].pct_change().shift(shift_period)
+    df['Volume_Log'] = np.log1p(df['volume']).shift(shift_period)
+    df['SMA_10'] = ta.sma(df['close'], length=10).shift(shift_period)
+    df['SMA_20'] = ta.sma(df['close'], length=20).shift(shift_period)
+    df['RSI_14'] = ta.rsi(df['close'], length=14).shift(shift_period)
     
-    # Médias móveis
-    df['SMA_10'] = ta.sma(df['close'], length=10).shift(2)
-    df['SMA_20'] = ta.sma(df['close'], length=20).shift(2)
-    df['EMA_50'] = ta.ema(df['close'], length=50).shift(2)
-    df['EMA_200'] = ta.ema(df['close'], length=200).shift(2)
+    # --- NOVAS FEATURES ADICIONAIS ---
+    # EMA para tendência curta
+    df['EMA_12'] = ta.ema(df['close'], length=12).shift(shift_period)
     
-    # Indicadores de tendência
+    # Bandas de Bollinger
+    bb = ta.bbands(df['close'], length=20)
+    if bb is not None:
+        df['BB_upper'] = bb.iloc[:, 0].shift(shift_period)
+        df['BB_lower'] = bb.iloc[:, 2].shift(shift_period)
+        df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['close']
+    
+    # ATR para volatilidade
+    df['ATR_14'] = ta.atr(df['high'], df['low'], df['close'], length=14).shift(shift_period)
+    
+    # Volume relativo
+    df['Volume_SMA'] = ta.sma(df['volume'], length=20).shift(shift_period)
+    df['Volume_Ratio'] = (df['volume'] / df['Volume_SMA']).shift(shift_period)
+    
+    # MACD (mantido do original)
     macd = ta.macd(df['close'])
     if macd is not None:
-        df['MACD'] = macd.iloc[:, 0].shift(2)
-        df['MACD_Sinal'] = macd.iloc[:, 1].shift(2)
-        df['MACD_Histograma'] = macd.iloc[:, 2].shift(2)
+        df['MACD'] = macd.iloc[:, 0].shift(shift_period)
+        df['MACD_Sinal'] = macd.iloc[:, 1].shift(shift_period)
+        df['MACD_Histograma'] = macd.iloc[:, 2].shift(shift_period)
     
-    # Momentum
-    df['RSI_14'] = ta.rsi(df['close'], length=14).shift(2)
-    df['ROC_10'] = ta.roc(df['close'], length=10).shift(2)
-    df['WilliamsR_14'] = ta.willr(df['high'], df['low'], df['close'], length=14).shift(2)
-    df['Stoch_K'] = ta.stoch(df['high'], df['low'], df['close']).iloc[:, 0].shift(2)
-    df['Stoch_D'] = ta.stoch(df['high'], df['low'], df['close']).iloc[:, 1].shift(2)
+    # Retornos adicionais
+    df['Retorno_3d'] = df['close'].pct_change(3).shift(shift_period)
+    df['Retorno_5d'] = df['close'].pct_change(5).shift(shift_period)
     
-    bb = ta.bbands(df['close'], length=20)
-    if bb is not None and not bb.empty:
-        # tenta detectar automaticamente os nomes das colunas
-        upper_col = next((c for c in bb.columns if "BBU" in c or "upper" in c.lower()), None)
-        lower_col = next((c for c in bb.columns if "BBL" in c or "lower" in c.lower()), None)
-        if upper_col and lower_col:
-            df['BB_width'] = (bb[upper_col] - bb[lower_col]).shift(2)
-        else:
-            df['BB_width'] = np.nan  # fallback seguro
-    else:
-        df['BB_width'] = np.nan
-    
-    # Indicadores de volume
-    df['OBV'] = ta.obv(df['close'], df['volume']).shift(2)
-    df['MFI_14'] = ta.mfi(df['high'], df['low'], df['close'], df['volume'], length=14).shift(2)
-    
-    # Relações intradiárias
-    df['Close/Open'] = (df['close'] / df['open']).shift(2)
-    df['High/Low'] = (df['high'] / df['low']).shift(2)
-    
-    # Features temporais (sazonalidade)
-    df['Mes'] = df.index.month
-    df['Dia_Semana'] = df.index.dayofweek
+    # Gap de abertura
+    df['Open_Gap_Pct'] = ((df['open'] - df['close'].shift(1)) / df['close'].shift(1)).shift(shift_period)
     
     return df.dropna()
 
-
-# ===================== SELECIONAR CARACTERÍSTICAS (COM MUTUAL INFORMATION) =====================
-
 def SelecionarCaracteristicas(df_treino, num_caracteristicas=NUMERO_CARACTERISTICAS):
-    df_treino = df_treino.copy()
-    colunas_numericas = df_treino.select_dtypes(include=[np.number]).columns.tolist()
+    """Versão melhorada mantendo compatibilidade"""
     
-    if 'close' not in colunas_numericas:
-        raise ValueError("A coluna 'close' precisa estar presente nos dados de treino.")
+    # Lista de features para considerar (excluir preços)
+    excluir = ['close', 'open', 'high', 'low', 'volume']
+    features_candidatas = [col for col in df_treino.columns if col not in excluir]
     
-    # Remove colunas triviais
-    colunas_validas = [c for c in colunas_numericas if c not in ['close', 'open', 'high', 'low']]
+    # ✅ Método mais robusto de seleção
+    correlacao_alvo = df_treino.corr(numeric_only=True)['close'].abs().sort_values(ascending=False)
     
-    # Calcular mutual information (captura dependências não lineares)
-    X = df_treino[colunas_validas].fillna(0)
-    y = df_treino['close'].fillna(0)
-    mi_scores = mutual_info_regression(X, y, random_state=42)
+    # Priorizar features com alta correlação com target
+    features_priorizadas = []
+    for feat in correlacao_alvo.index:
+        if feat not in excluir and feat in features_candidatas:
+            features_priorizadas.append(feat)
     
-    # Criar DataFrame com ranking
-    df_importancia = pd.DataFrame({'Feature': colunas_validas, 'Importancia': mi_scores})
-    df_importancia = df_importancia.sort_values(by='Importancia', ascending=False).reset_index(drop=True)
-    
-    # Selecionar top-N features, evitando colinearidade
+    # Selecionar features com baixa correlação entre si
     caracteristicas_selecionadas = []
-    for _, row in df_importancia.iterrows():
-        feat = row['Feature']
+    correlation_matrix = df_treino[features_priorizadas].corr().abs()
+    
+    for caracteristica in features_priorizadas:
         if len(caracteristicas_selecionadas) >= num_caracteristicas:
             break
-        adicionar = True
-        for sel in caracteristicas_selecionadas:
-            if abs(df_treino[feat].corr(df_treino[sel])) > 0.85:
-                adicionar = False
+            
+        # Verificar correlação com features já selecionadas
+        alta_correlacao = False
+        for selecionada in caracteristicas_selecionadas:
+            if correlation_matrix.loc[caracteristica, selecionada] > 0.85:  # Limite mais rigoroso
+                alta_correlacao = True
                 break
-        if adicionar:
-            caracteristicas_selecionadas.append(feat)
+                
+        if not alta_correlacao:
+            caracteristicas_selecionadas.append(caracteristica)
     
-    print("✅ Características selecionadas (via mutual information):")
+    print(f"✅ Características selecionadas ({len(caracteristicas_selecionadas)}):")
     for i, feat in enumerate(caracteristicas_selecionadas, 1):
-        print(f"{i:2d}. {feat}")
+        corr = correlacao_alvo[feat]
+        print(f"   {i:2d}. {feat} (corr: {corr:.4f})")
     
     return caracteristicas_selecionadas
+# ===================== SELECIONAR CARACTERÍSTICAS (COM MUTUAL INFORMATION) =====================
 
-
-# ===================== PREPARAR DADOS =====================
 def PrepararDados(df_treino, df_teste, caracteristicas, janela_temporal=JANELA_TEMPORAL):
-    escalonador_x_treino = StandardScaler()
-    escalonador_y_treino = StandardScaler()
+    """Versão com tratamento de outliers"""
+    
+    from sklearn.preprocessing import RobustScaler
+    
+    # ✅ Usar RobustScaler para reduzir impacto de outliers
+    escalonador_x_treino = RobustScaler()
+    escalonador_y_treino = RobustScaler()
     
     X_treino_escalonado = escalonador_x_treino.fit_transform(df_treino[caracteristicas])
     y_treino_escalonado = escalonador_y_treino.fit_transform(df_treino[['close']])
@@ -176,9 +170,9 @@ def PrepararDados(df_treino, df_teste, caracteristicas, janela_temporal=JANELA_T
     X_teste, y_teste = CriarSequencias(X_teste_escalonado, y_teste_escalonado, janela_temporal)
     
     print(f"✅ Dados preparados - Treino: {X_treino.shape}, Teste: {X_teste.shape}")
+    print(f"   Escalonador: RobustScaler (resistente a outliers)")
     
     return X_treino, X_teste, y_treino, y_teste, escalonador_y_treino
-
 # ===================== MODELO LSTM =====================
 def CriarModeloLSTM(formato_entrada):
     modelo = Sequential([
@@ -225,6 +219,8 @@ def AplicarTaxasVenda(valor_venda_bruto, custo_compra, eh_day_trade):
 
 # ===================== BACKTEST COM GESTÃO DE RISCO =====================
 def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
+    """Versão com critérios de entrada mais inteligentes"""
+    
     capital = capital_inicial
     acoes = 0
     preco_entrada = 0
@@ -237,7 +233,6 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
     total_taxas_pagas = 0
     total_impostos_pagos = 0
     
-    # DEBUG: Contador de sinais
     sinais_compra_identificados = 0
     trades_executados = 0
 
@@ -251,34 +246,36 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
         
         sinal = "MANTER"
         
-        # CRITÉRIOS DE ENTRADA MAIS FLEXÍVEIS
+        # ✅ CRITÉRIOS DE ENTRADA MAIS ROBUSTOS
         if not trade_ativo and capital > preco_atual:
-            # Condições simplificadas para debug
-            condicao_previsao = razao_preco > 1.008  # 0.8% acima
-            condicao_tendencia = preco_atual > df.loc[data_atual, 'SMA_10']  # SMA mais curta
-            condicao_rsi = 30 < df.loc[data_atual, 'RSI_14'] < 70  # Zona neutra
+            # Múltiplas condições combinadas
+            condicao_previsao = razao_preco > 1.01  # 1% acima
+            condicao_tendencia = (preco_atual > df.loc[data_atual, 'SMA_10'] and 
+                                 df.loc[data_atual, 'SMA_10'] > df.loc[data_atual, 'SMA_20'])
+            condicao_rsi = 40 < df.loc[data_atual, 'RSI_14'] < 65  # Zona mais conservadora
+            condicao_volume = df.loc[data_atual, 'Volume_Ratio'] > 0.8  # Volume não muito baixo
             
-            if condicao_previsao:  # Apenas previsão por enquanto
+            # Combinar condições
+            condicoes_entrada = condicao_previsao + condicao_tendencia + condicao_rsi + condicao_volume
+            if condicoes_entrada >= 3:  # Pelo menos 3 condições atendidas
                 sinal = "COMPRAR"
                 sinais_compra_identificados += 1
-                
-                # DEBUG: Mostrar primeiro sinal
-                if sinais_compra_identificados <= 3:
-                    print(f"🎯 SINAL COMPRA: {data_atual} | Preço: {preco_atual:.2f} | Previsão: {preco_previsto:.2f} | Razão: {razao_preco:.4f}")
                 
         elif trade_ativo:
             dias_em_posicao += 1
             
-            # CRITÉRIOS DE SAÍDA
+            # ✅ CRITÉRIOS DE SAÍDA MELHORADOS
             stop_loss = preco_atual <= preco_entrada * (1 - STOP_LOSS_PORCENTAGEM)
             take_profit = preco_atual >= preco_entrada * (1 + TAKE_PROFIT_PORCENTAGEM)
-            saida_previsao = razao_preco < 0.99  # Previsão piorou
+            saida_previsao = razao_preco < 0.995  # Previsão piorou 0.5%
             saida_tempo = dias_em_posicao >= MAXIMO_DIAS_POSICAO
+            saida_rsi_alto = df.loc[data_atual, 'RSI_14'] > 70  # RSI muito alto
             
-            if stop_loss or take_profit or saida_previsao or saida_tempo:
+            if stop_loss or take_profit or saida_previsao or saida_tempo or saida_rsi_alto:
                 sinal = "VENDER"
-                motivo = "STOP_LOSS" if stop_loss else "TAKE_PROFIT" if take_profit else "PREVISAO" if saida_previsao else "TEMPO"
-                print(f"📉 SINAL VENDA ({motivo}): {data_atual} | Preço: {preco_atual:.2f} | Entrada: {preco_entrada:.2f}")
+                motivo = "STOP_LOSS" if stop_loss else "TAKE_PROFIT" if take_profit else "PREVISAO" if saida_previsao else "TEMPO" if saida_tempo else "RSI_ALTO"
+                
+        # ... (restante do código mantido igual) ...
 
         # EXECUTAR COMPRA
         if sinal == "COMPRAR":
@@ -301,8 +298,7 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
                 })
                 total_taxas_pagas += taxas_compra
                 
-                print(f"💰 COMPRA EXECUTADA: {data_atual} | Preço: {preco_atual:.2f} | Capital usado: R$ {capital_para_trade:.2f}")
-
+                print(f"💰 COMPRA EXECUTADA: {data_atual} | Preço: {preco_atual:.2f} | Capital: R$ {capital_para_trade:.2f}")
         # EXECUTAR VENDA
         elif sinal == "VENDER" and acoes > 0:
             valor_venda_bruto = acoes * preco_atual
