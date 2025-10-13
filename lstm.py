@@ -15,14 +15,14 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configurações
-TICKER = "PETR4.SA"
+TICKER = "ITUB4.SA"
 DATA_INICIO_TREINO = "2020-01-01"
 DATA_FIM_TREINO = "2023-12-31"
 DATA_INICIO_TESTE = "2024-01-01"
 DATA_FIM_TESTE = "2024-08-31"
 CAPITAL_INICIAL = 1000.00
 JANELA_TEMPORAL = 30
-EPOCAS = 120
+EPOCAS = 100
 TAMANHO_LOTE = 16
 NUMERO_CARACTERISTICAS = 10
 
@@ -56,47 +56,23 @@ def BaixarDados(ticker, data_inicio, data_fim):
 def CalcularIndicadores(df):
     df = df.copy()
     
-    # CORREÇÃO CRÍTICA: USAR SHIFT(1) PARA EVITAR LOOKAHEAD BIAS
-    df['Retornos'] = df['close'].pct_change().shift(1)
-    df['Volume_Log'] = np.log1p(df['volume']).shift(1)
-    df['Volume_Razao'] = (df['volume'] / df['volume'].rolling(20).mean()).shift(1)
+    # CORREÇÃO: Usar shift(2) para evitar qualquer lookahead bias
+    df['Retornos'] = df['close'].pct_change().shift(2)  # Mudança crítica
     
-    # Médias móveis com shift
-    df['SMA_10'] = ta.sma(df['close'], length=10).shift(1)
-    df['SMA_20'] = ta.sma(df['close'], length=20).shift(1)
-    df['EMA_12'] = ta.ema(df['close'], length=12).shift(1)
-    df['EMA_26'] = ta.ema(df['close'], length=26).shift(1)
+    # Todos os indicadores com shift(2)
+    df['Volume_Log'] = np.log1p(df['volume']).shift(2)
+    df['SMA_10'] = ta.sma(df['close'], length=10).shift(2)
+    df['SMA_20'] = ta.sma(df['close'], length=20).shift(2)
+    df['RSI_14'] = ta.rsi(df['close'], length=14).shift(2)
     
-    # RSI com shift
-    df['RSI_14'] = ta.rsi(df['close'], length=14).shift(1)
-    
-    # MACD com shift
+    # MACD com shift(2)
     macd = ta.macd(df['close'])
     if macd is not None:
-        df['MACD'] = macd.iloc[:, 0].shift(1)
-        df['MACD_Sinal'] = macd.iloc[:, 1].shift(1)
-        df['MACD_Histograma'] = macd.iloc[:, 2].shift(1)
+        df['MACD'] = macd.iloc[:, 0].shift(2)
+        df['MACD_Sinal'] = macd.iloc[:, 1].shift(2)
+        df['MACD_Histograma'] = macd.iloc[:, 2].shift(2)
     
-    # Bollinger Bands com shift
-    bb = ta.bbands(df['close'], length=20)
-    if bb is not None and len(bb.columns) >= 3:
-        df['BB_Superior'] = bb.iloc[:, 2].shift(1)
-        df['BB_Inferior'] = bb.iloc[:, 0].shift(1)
-        df['BB_Medio'] = bb.iloc[:, 1].shift(1)
-        df['BB_Percentual'] = ((df['close'] - bb.iloc[:, 0]) / (bb.iloc[:, 2] - bb.iloc[:, 0])).shift(1)
-    
-    # ATR com shift
-    df['ATR_14'] = ta.atr(df['high'], df['low'], df['close'], length=14).shift(1)
-    
-    # Indicadores adicionais com shift
-    df['Alta_Baixa_Razao'] = ((df['high'] - df['low']) / df['close']).shift(1)
-    df['Fechamento_Abertura_Razao'] = (df['close'] / df['open']).shift(1)
-    
-    # Remover NaN values
-    df = df.dropna()
-    print(f"✅ Indicadores calculados (com shift): {len(df)} períodos válidos")
-    
-    return df
+    return df.dropna()
 
 # ===================== SELECIONAR CARACTERÍSTICAS =====================
 def SelecionarCaracteristicas(df_treino, num_caracteristicas=NUMERO_CARACTERISTICAS):
@@ -146,14 +122,16 @@ def PrepararDados(df_treino, df_teste, caracteristicas, janela_temporal=JANELA_T
 # ===================== MODELO LSTM =====================
 def CriarModeloLSTM(formato_entrada):
     modelo = Sequential([
-        LSTM(64, return_sequences=True, input_shape=formato_entrada, dropout=0.2),
-        LSTM(32, return_sequences=False, dropout=0.2),
+        LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
+        LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
+        LSTM(64, return_sequences=False, dropout=0.2),
+        Dense(128, activation='relu'),
+        Dropout(0.4),
+        Dense(64, activation='relu'),
+        Dropout(0.3),
         Dense(32, activation='relu'),
-        Dropout(0.2),
-        Dense(16, activation='relu'),
         Dense(1)
     ])
-    
     modelo.compile(
         optimizer=Adam(learning_rate=0.001),
         loss='mse',
