@@ -15,22 +15,22 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configurações
-TICKER = "ITUB4.SA"
+TICKER = "BBAS3.SA"
 DATA_INICIO_TREINO = "2020-01-01"
 DATA_FIM_TREINO = "2023-12-31"
 DATA_INICIO_TESTE = "2024-01-01"
 DATA_FIM_TESTE = "2024-08-31"
-CAPITAL_INICIAL = 1000.00
-JANELA_TEMPORAL = 60
+CAPITAL_INICIAL = 5000.00  
+JANELA_TEMPORAL = 30  # Reduzindo para 30 para mais oportunidades
 EPOCAS = 100
 TAMANHO_LOTE = 16
 NUMERO_CARACTERISTICAS = 10
 
-# Gestão de Risco
-STOP_LOSS_PORCENTAGEM = 0.05
-TAKE_PROFIT_PORCENTAGEM = 0.08
-PORCENTAGEM_MAXIMA_POR_TRADE = 0.20
-MAXIMO_DIAS_POSICAO = 15
+# Gestão de Risco (MAIS AGRESSIVA)
+STOP_LOSS_PORCENTAGEM = 0.03  # Reduzindo stop loss
+TAKE_PROFIT_PORCENTAGEM = 0.05  # Reduzindo take profit
+PORCENTAGEM_MAXIMA_POR_TRADE = 0.30  # Aumentando para 30%
+MAXIMO_DIAS_POSICAO = 10  # Reduzindo tempo máximo
 
 # Taxas
 TAXA_CORRETAGEM = 0.005
@@ -70,13 +70,16 @@ def CalcularIndicadores(df):
     # --- NOVAS FEATURES ADICIONAIS ---
     # EMA para tendência curta
     df['EMA_12'] = ta.ema(df['close'], length=12).shift(shift_period)
+    df['EMA_5'] = ta.ema(df['close'], length=5).shift(shift_period)  # EMA mais curta
     
     # Bandas de Bollinger
     bb = ta.bbands(df['close'], length=20)
     if bb is not None:
         df['BB_upper'] = bb.iloc[:, 0].shift(shift_period)
         df['BB_lower'] = bb.iloc[:, 2].shift(shift_period)
-        df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['close']
+        df['BB_middle'] = bb.iloc[:, 1].shift(shift_period)
+        df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['BB_middle']
+        df['BB_posicao'] = (df['close'] - df['BB_lower']) / (df['BB_upper'] - df['BB_lower'])
     
     # ATR para volatilidade
     df['ATR_14'] = ta.atr(df['high'], df['low'], df['close'], length=14).shift(shift_period)
@@ -93,11 +96,15 @@ def CalcularIndicadores(df):
         df['MACD_Histograma'] = macd.iloc[:, 2].shift(shift_period)
     
     # Retornos adicionais
+    df['Retorno_1d'] = df['close'].pct_change(1).shift(shift_period)
     df['Retorno_3d'] = df['close'].pct_change(3).shift(shift_period)
     df['Retorno_5d'] = df['close'].pct_change(5).shift(shift_period)
     
     # Gap de abertura
     df['Open_Gap_Pct'] = ((df['open'] - df['close'].shift(1)) / df['close'].shift(1)).shift(shift_period)
+    
+    # Momento
+    df['Momentum_5d'] = (df['close'] / df['close'].shift(5) - 1).shift(shift_period)
     
     return df.dropna()
 
@@ -194,8 +201,10 @@ def AplicarTaxasVenda(valor_venda_bruto, custo_compra, eh_day_trade):
     return max(valor_venda_liquido, 0), taxas_pagas, imposto
 
 def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
-    """Versão com critérios de entrada mais inteligentes"""
-    
+    """
+    Backtest mais dinâmico — não tão restrito, permitindo trades leves.
+    Estratégia híbrida com múltiplos sinais e pontuação adaptativa.
+    """
     capital = capital_inicial
     acoes = 0
     preco_entrada = 0
@@ -204,10 +213,9 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
     curva_patrimonio = [capital]
     trade_ativo = False
     dias_em_posicao = 0
-    
+
     total_taxas_pagas = 0
     total_impostos_pagos = 0
-    
     sinais_compra_identificados = 0
     trades_executados = 0
 
@@ -218,42 +226,67 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
         preco_atual = df.loc[data_atual, 'close']
         preco_previsto = previsoes[i]
         razao_preco = preco_previsto / preco_atual
-        
         sinal = "MANTER"
-        
-        # ✅ CRITÉRIOS DE ENTRADA MAIS ROBUSTOS
+
+        # =====================================================
+        # 🟢 CONDIÇÕES DE ENTRADA (compra)
+        # =====================================================
         if not trade_ativo and capital > preco_atual:
-            # Múltiplas condições combinadas
-            condicao_previsao = razao_preco > 1.01  # 1% acima
-            condicao_tendencia = (preco_atual > df.loc[data_atual, 'SMA_10'] and 
-                                 df.loc[data_atual, 'SMA_10'] > df.loc[data_atual, 'SMA_20'])
-            condicao_rsi = 40 < df.loc[data_atual, 'RSI_14'] < 65  # Zona mais conservadora
-            condicao_volume = df.loc[data_atual, 'Volume_Ratio'] > 0.8  # Volume não muito baixo
-            
-            # Combinar condições
-            condicoes_entrada = condicao_previsao + condicao_tendencia + condicao_rsi + condicao_volume
-            if condicoes_entrada >= 3:  # Pelo menos 3 condições atendidas
+            cond_previsao = razao_preco > 1.002  # previsão apenas 0.2% acima
+            cond_tendencia = df.loc[data_atual, 'SMA_10'] > df.loc[data_atual, 'SMA_20']
+            cond_macd = df.loc[data_atual, 'MACD'] > df.loc[data_atual, 'MACD_Sinal']
+            cond_rsi = 35 < df.loc[data_atual, 'RSI_14'] < 70
+            cond_volume = df.loc[data_atual, 'Volume_Ratio'] > 0.6
+            cond_bb = df.loc[data_atual, 'BB_posicao'] < 0.85
+
+            # sistema de pontuação mais permissivo
+            pontuacao = 0
+            if cond_previsao: pontuacao += 2  # previsão positiva vale mais
+            if cond_tendencia: pontuacao += 1
+            if cond_macd: pontuacao += 1
+            if cond_rsi: pontuacao += 1
+            if cond_volume: pontuacao += 1
+            if cond_bb: pontuacao += 1
+
+            # exige apenas 3 pontos totais
+            if pontuacao >= 3:
                 sinal = "COMPRAR"
                 sinais_compra_identificados += 1
-                
+                print(f"🟢 COMPRA SINAL: {data_atual.date()} | Pontuação {pontuacao}/7 | "
+                      f"Prev: {preco_previsto:.2f} | Atual: {preco_atual:.2f} | Razão: {razao_preco:.4f}")
+
+        # =====================================================
+        # 🔴 CONDIÇÕES DE SAÍDA (venda)
+        # =====================================================
         elif trade_ativo:
             dias_em_posicao += 1
-            
-            # ✅ CRITÉRIOS DE SAÍDA MELHORADOS
+
             stop_loss = preco_atual <= preco_entrada * (1 - STOP_LOSS_PORCENTAGEM)
             take_profit = preco_atual >= preco_entrada * (1 + TAKE_PROFIT_PORCENTAGEM)
-            saida_previsao = razao_preco < 0.995  # Previsão piorou 0.5%
+            saida_previsao = razao_preco < 0.999  # previsão 0.1% pior já é sinal de saída
             saida_tempo = dias_em_posicao >= MAXIMO_DIAS_POSICAO
-            saida_rsi_alto = df.loc[data_atual, 'RSI_14'] > 70  # RSI muito alto
-            
-            if stop_loss or take_profit or saida_previsao or saida_tempo or saida_rsi_alto:
-                sinal = "VENDER"
-                motivo = "STOP_LOSS" if stop_loss else "TAKE_PROFIT" if take_profit else "PREVISAO" if saida_previsao else "TEMPO" if saida_tempo else "RSI_ALTO"
+            saida_rsi_alto = df.loc[data_atual, 'RSI_14'] > 75
+            saida_bb_alto = df.loc[data_atual, 'BB_posicao'] > 0.9
+            saida_macd_negativo = df.loc[data_atual, 'MACD'] < df.loc[data_atual, 'MACD_Sinal']
 
-        # EXECUTAR COMPRA
+            if stop_loss or take_profit or saida_previsao or saida_tempo or saida_rsi_alto or saida_bb_alto or saida_macd_negativo:
+                sinal = "VENDER"
+                motivo = (
+                    "STOP_LOSS" if stop_loss else
+                    "TAKE_PROFIT" if take_profit else
+                    "PREVISAO" if saida_previsao else
+                    "TEMPO" if saida_tempo else
+                    "RSI_ALTO" if saida_rsi_alto else
+                    "BB_ALTO" if saida_bb_alto else
+                    "MACD_NEG" if saida_macd_negativo else
+                    "DESCONHECIDO"
+                )
+
+        # =====================================================
+        # 💰 EXECUTAR COMPRA
+        # =====================================================
         if sinal == "COMPRAR":
             capital_para_trade = min(capital, capital_inicial * PORCENTAGEM_MAXIMA_POR_TRADE)
-            
             if capital_para_trade > preco_atual:
                 valor_pos_taxas, taxas_compra = AplicarTaxasCompra(capital_para_trade)
                 acoes = valor_pos_taxas / preco_atual
@@ -263,51 +296,65 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
                 trade_ativo = True
                 dias_em_posicao = 0
                 trades_executados += 1
-                
+
                 trades.append({
-                    "data": data_atual, "acao": "COMPRAR", "preco": preco_atual,
-                    "acoes": acoes, "taxas": taxas_compra, "valor_total": valor_pos_taxas,
-                    "capital_utilizado": capital_para_trade
+                    "data": data_atual,
+                    "acao": "COMPRAR",
+                    "preco": preco_atual,
+                    "acoes": acoes,
+                    "taxas": taxas_compra,
+                    "valor_total": valor_pos_taxas,
+                    "razao_preco": razao_preco,
+                    "preco_previsto": preco_previsto
                 })
                 total_taxas_pagas += taxas_compra
-                
-                print(f"💰 COMPRA EXECUTADA: {data_atual} | Preço: {preco_atual:.2f} | Capital: R$ {capital_para_trade:.2f}")
 
-        # EXECUTAR VENDA
+                print(f"💵 COMPRA EXECUTADA: {data_atual.date()} | Preço: {preco_atual:.2f} | "
+                      f"Prev: {preco_previsto:.2f} | Razão: {razao_preco:.4f}")
+
+        # =====================================================
+        # 💸 EXECUTAR VENDA
+        # =====================================================
         elif sinal == "VENDER" and acoes > 0:
             valor_venda_bruto = acoes * preco_atual
             custo_compra = acoes * preco_entrada
             eh_day_trade = (data_entrada.date() == data_atual.date())
-            
-            valor_liquido, taxas_venda, imposto = AplicarTaxasVenda(
-                valor_venda_bruto, custo_compra, eh_day_trade
-            )
-            
+
+            valor_liquido, taxas_venda, imposto = AplicarTaxasVenda(valor_venda_bruto, custo_compra, eh_day_trade)
             capital += valor_liquido
             retorno_porcentagem = (valor_liquido / custo_compra - 1) * 100
-            
+
             trades.append({
-                "data": data_atual, "acao": "VENDER", "preco": preco_atual,
-                "acoes": acoes, "retorno_porcentagem": retorno_porcentagem,
-                "preco_entrada": preco_entrada, "taxas": taxas_venda,
-                "eh_day_trade": eh_day_trade, "valor_liquido": valor_liquido,
-                "dias_posicao": dias_em_posicao
+                "data": data_atual,
+                "acao": "VENDER",
+                "preco": preco_atual,
+                "acoes": acoes,
+                "retorno_porcentagem": retorno_porcentagem,
+                "preco_entrada": preco_entrada,
+                "taxas": taxas_venda,
+                "valor_liquido": valor_liquido,
+                "dias_posicao": dias_em_posicao,
+                "motivo_saida": motivo
             })
-            
+
             total_taxas_pagas += taxas_venda
             total_impostos_pagos += imposto
-            
-            print(f"💸 VENDA EXECUTADA: {data_atual} | Preço: {preco_atual:.2f} | Retorno: {retorno_porcentagem:+.2f}%")
-            
+            print(f"💣 VENDA: {data_atual.date()} | Motivo: {motivo} | "
+                  f"Retorno: {retorno_porcentagem:+.2f}% | Dias: {dias_em_posicao}")
+
             acoes = 0
             trade_ativo = False
             dias_em_posicao = 0
 
+        # =====================================================
         # Atualizar curva de patrimônio
+        # =====================================================
         valor_portfolio = capital + (acoes * preco_atual if acoes > 0 else 0)
         curva_patrimonio.append(valor_portfolio)
-    
-    # Fechar posição aberta no final do período
+
+    # =====================================================
+    # Fechar posição aberta no fim do teste
+    # =====================================================
     if trade_ativo and len(datas) > 0:
         ultima_data = datas[-1]
         if ultima_data in df.index:
@@ -315,47 +362,54 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
             valor_venda_bruto = acoes * ultimo_preco
             custo_compra = acoes * preco_entrada
             eh_day_trade = (data_entrada.date() == ultima_data.date())
-            
-            valor_liquido, taxas_venda, imposto = AplicarTaxasVenda(
-                valor_venda_bruto, custo_compra, eh_day_trade
-            )
-            
+
+            valor_liquido, taxas_venda, imposto = AplicarTaxasVenda(valor_venda_bruto, custo_compra, eh_day_trade)
             capital += valor_liquido
             retorno_porcentagem = (valor_liquido / custo_compra - 1) * 100
-            
+
             trades.append({
-                "data": ultima_data, "acao": "VENDER", "preco": ultimo_preco,
-                "acoes": acoes, "retorno_porcentagem": retorno_porcentagem,
-                "preco_entrada": preco_entrada, "taxas": taxas_venda,
-                "eh_day_trade": eh_day_trade, "valor_liquido": valor_liquido,
-                "dias_posicao": dias_em_posicao, "fechamento_forcado": True
+                "data": ultima_data,
+                "acao": "VENDER",
+                "preco": ultimo_preco,
+                "acoes": acoes,
+                "retorno_porcentagem": retorno_porcentagem,
+                "preco_entrada": preco_entrada,
+                "taxas": taxas_venda,
+                "valor_liquido": valor_liquido,
+                "dias_posicao": dias_em_posicao,
+                "fechamento_forcado": True
             })
-            
+
             total_taxas_pagas += taxas_venda
             total_impostos_pagos += imposto
-            
-            print(f"🔚 FECHAMENTO FORÇADO: {ultima_data} | Preço: {ultimo_preco:.2f} | Retorno: {retorno_porcentagem:+.2f}%")
-    
-    print(f"\n🔍 RESUMO BACKTEST:")
+            print(f"🔚 FECHAMENTO FORÇADO: {ultima_data.date()} | "
+                  f"Retorno: {retorno_porcentagem:+.2f}%")
+
+    # =====================================================
+    # 🔍 Resumo do backtest
+    # =====================================================
+    print("\n📊 RESUMO BACKTEST:")
     print(f"   Sinais de compra identificados: {sinais_compra_identificados}")
     print(f"   Trades executados: {trades_executados}")
-    print(f"   Total de operações (compra+venda): {len(trades)}")
-    
-    return curva_patrimonio, trades, capital, total_taxas_pagas, total_impostos_pagos
+    print(f"   Total de operações: {len(trades)}")
+    print(f"   Taxas pagas totais: R$ {total_taxas_pagas:.2f}")
 
+    return curva_patrimonio, trades, capital, total_taxas_pagas, total_impostos_pagos
 def AnalisarTrades(trades):
     if len(trades) < 2:
         return {
             "total_trades": 0, "taxa_acerto": 0, 
             "lucro_medio_bruto": 0, "lucro_medio_liquido": 0, 
             "total_taxas_pagas": 0, "dias_medio_posicao": 0,
-            "trades_fechamento_forcado": 0, "trades": []
+            "trades_fechamento_forcado": 0, "motivos_saida": {},
+            "razao_preco_media": 0, "trades": []
         }
 
     resultados_trades = []
     trades_vencedores = 0
     total_taxas = 0
-    
+    razoes_preco = []
+
     for i in range(0, len(trades)-1, 2):
         if trades[i]['acao'] == 'COMPRAR' and trades[i+1]['acao'] == 'VENDER':
             trade_compra = trades[i]
@@ -363,13 +417,21 @@ def AnalisarTrades(trades):
             retorno_liquido = trade_venda['retorno_porcentagem']
             taxas_operacao = trade_compra.get('taxas', 0) + trade_venda.get('taxas', 0)
             
+            # Coletar razão preço previsto/real na compra
+            razao = trade_compra.get('razao_preco', 0)
+            razoes_preco.append(razao)
+            
             resultados_trades.append({
                 'retorno_bruto': trade_venda['retorno_porcentagem'],
                 'retorno_liquido': retorno_liquido,
                 'taxas': taxas_operacao,
                 'day_trade': trade_venda.get('eh_day_trade', False),
                 'dias_posicao': trade_venda.get('dias_posicao', 0),
-                'fechamento_forcado': trade_venda.get('fechamento_forcado', False)
+                'fechamento_forcado': trade_venda.get('fechamento_forcado', False),
+                'motivo_saida': trade_venda.get('motivo_saida', 'DESCONHECIDO'),
+                'razao_preco': razao,
+                'preco_previsto_compra': trade_compra.get('preco_previsto', 0),
+                'preco_real_compra': trade_compra.get('preco', 0)
             })
             
             total_taxas += taxas_operacao
@@ -382,6 +444,13 @@ def AnalisarTrades(trades):
         lucro_medio_liquido = np.mean([t['retorno_liquido'] for t in resultados_trades])
         dias_medio_posicao = np.mean([t['dias_posicao'] for t in resultados_trades])
         trades_fechamento_forcado = sum(1 for t in resultados_trades if t['fechamento_forcado'])
+        razao_preco_media = np.mean(razoes_preco)
+        
+        # Análise dos motivos de saída
+        motivos_saida = {}
+        for trade in resultados_trades:
+            motivo = trade.get('motivo_saida', 'DESCONHECIDO')
+            motivos_saida[motivo] = motivos_saida.get(motivo, 0) + 1
         
         return {
             "total_trades": len(resultados_trades),
@@ -391,6 +460,8 @@ def AnalisarTrades(trades):
             "total_taxas_pagas": total_taxas,
             "dias_medio_posicao": dias_medio_posicao,
             "trades_fechamento_forcado": trades_fechamento_forcado,
+            "motivos_saida": motivos_saida,
+            "razao_preco_media": razao_preco_media,
             "trades": resultados_trades
         }
     
@@ -398,21 +469,22 @@ def AnalisarTrades(trades):
         "total_trades": 0, "taxa_acerto": 0, 
         "lucro_medio_bruto": 0, "lucro_medio_liquido": 0, 
         "total_taxas_pagas": 0, "dias_medio_posicao": 0,
-        "trades_fechamento_forcado": 0, "trades": []
+        "trades_fechamento_forcado": 0, "motivos_saida": {},
+        "razao_preco_media": 0, "trades": []
     }
 
 # ===================== MODELOS =====================
 
 def CriarModeloLSTM(formato_entrada):
     modelo = Sequential([
-        LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
-        LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
-        LSTM(64, return_sequences=False, dropout=0.2),
-        Dense(128, activation='relu'),
-        Dropout(0.4),
+        LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.1, input_shape=formato_entrada),
+        LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
+        LSTM(32, return_sequences=False, dropout=0.1),
         Dense(64, activation='relu'),
-        Dropout(0.3),
+        Dropout(0.2),
         Dense(32, activation='relu'),
+        Dropout(0.1),
+        Dense(16, activation='relu'),
         Dense(1)
     ])
     modelo.compile(
@@ -428,22 +500,21 @@ def CriarModeloCNN1D(formato_entrada):
                input_shape=formato_entrada),
         BatchNormalization(),
         MaxPooling1D(pool_size=2),
-        Dropout(0.3),
+        Dropout(0.2),
         
         Conv1D(filters=32, kernel_size=2, activation='relu', padding='same'),
         BatchNormalization(),
         MaxPooling1D(pool_size=2),
-        Dropout(0.3),
+        Dropout(0.2),
         
         Conv1D(filters=16, kernel_size=2, activation='relu', padding='same'),
         BatchNormalization(),
         GlobalAveragePooling1D(),
-        Dropout(0.2),
+        Dropout(0.1),
         
         Dense(32, activation='relu'),
-        Dropout(0.2),
-        Dense(16, activation='relu'),
         Dropout(0.1),
+        Dense(16, activation='relu'),
         Dense(1)
     ])
     modelo.compile(
@@ -470,7 +541,7 @@ def ExecutarLSTM(df_treino, df_teste, caracteristicas):
         batch_size=TAMANHO_LOTE,
         validation_data=(X_teste, y_teste),
         verbose=0,
-        callbacks=[EarlyStopping(patience=20, restore_best_weights=True, min_delta=0.001)]
+        callbacks=[EarlyStopping(patience=15, restore_best_weights=True, min_delta=0.001)]
     )
 
     previsoes_escalonadas = modelo.predict(X_teste, verbose=0)
@@ -521,7 +592,7 @@ def ExecutarCNN1D(df_treino, df_teste, caracteristicas):
         batch_size=TAMANHO_LOTE,
         validation_data=(X_teste, y_teste),
         verbose=0,
-        callbacks=[EarlyStopping(patience=20, restore_best_weights=True, min_delta=0.001)]
+        callbacks=[EarlyStopping(patience=15, restore_best_weights=True, min_delta=0.001)]
     )
 
     previsoes_escalonadas = modelo.predict(X_teste, verbose=0)
@@ -759,6 +830,17 @@ def ExecutarComparacaoCompleta():
     print(f"   Taxa Acerto - LSTM: {resultados_lstm['trades']['taxa_acerto']:.1f}% | CNN1D: {resultados_cnn['trades']['taxa_acerto']:.1f}%")
     print(f"   Total Trades - LSTM: {resultados_lstm['trades']['total_trades']} | CNN1D: {resultados_cnn['trades']['total_trades']}")
     print(f"   Lucro Médio - LSTM: {resultados_lstm['trades']['lucro_medio_liquido']:.2f}% | CNN1D: {resultados_cnn['trades']['lucro_medio_liquido']:.2f}%")
+    
+    # Motivos de saída
+    if resultados_lstm['trades']['total_trades'] > 0:
+        print(f"\n📋 MOTIVOS DE SAÍDA - LSTM:")
+        for motivo, count in resultados_lstm['trades']['motivos_saida'].items():
+            print(f"   {motivo}: {count} trades")
+    
+    if resultados_cnn['trades']['total_trades'] > 0:
+        print(f"📋 MOTIVOS DE SAÍDA - CNN1D:")
+        for motivo, count in resultados_cnn['trades']['motivos_saida'].items():
+            print(f"   {motivo}: {count} trades")
     
     print(f"\n💰 CAPITAL FINAL:")
     print(f"   LSTM:  R$ {resultados_lstm['capital_final']:.2f}")
