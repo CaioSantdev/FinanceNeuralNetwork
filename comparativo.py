@@ -1,4 +1,4 @@
-# ===================== CONFIGURAÇÕES GERAIS =====================
+# ===================== CONFIGURAÇÕES GERAIS UNIFICADAS =====================
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -6,9 +6,8 @@ import pandas_ta as ta
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error, r2_score
 import tensorflow as tf
-from sklearn.feature_selection import mutual_info_regression
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Conv1D, MaxPooling1D, GlobalAveragePooling1D, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
@@ -22,7 +21,7 @@ DATA_FIM_TREINO = "2023-12-31"
 DATA_INICIO_TESTE = "2024-01-01"
 DATA_FIM_TESTE = "2024-08-31"
 CAPITAL_INICIAL = 1000.00
-JANELA_TEMPORAL = 30
+JANELA_TEMPORAL = 60
 EPOCAS = 100
 TAMANHO_LOTE = 16
 NUMERO_CARACTERISTICAS = 10
@@ -39,11 +38,12 @@ TAXA_EMOLUMENTOS = 0.0005
 TAXA_LIQUIDACAO = 0.0002
 IMPOSTO_DAY_TRADE = 0.20
 
-print(f"=== CONFIGURAÇÃO LSTM PARA {TICKER} ===")
+print(f"=== COMPARAÇÃO LSTM vs CNN1D PARA {TICKER} ===")
 print(f"Período Treino: {DATA_INICIO_TREINO} até {DATA_FIM_TREINO}")
 print(f"Período Teste:  {DATA_INICIO_TESTE} até {DATA_FIM_TESTE}")
 
-# ===================== DOWNLOAD DOS DADOS =====================
+# ===================== FUNÇÕES COMPARTILHADAS =====================
+
 def BaixarDados(ticker, data_inicio, data_fim):
     print(f"Baixando dados de {ticker}...")
     dados = yf.download(ticker, start=data_inicio, end=data_fim, auto_adjust=True, progress=False)
@@ -53,7 +53,6 @@ def BaixarDados(ticker, data_inicio, data_fim):
     print(f"✅ Dados baixados: {len(dados)} períodos")
     return dados
 
-# ===================== CALCULAR INDICADORES (VERSÃO APRIMORADA) =====================
 def CalcularIndicadores(df):
     """Versão melhorada mas compatível com o código existente"""
     df = df.copy()
@@ -129,7 +128,7 @@ def SelecionarCaracteristicas(df_treino, num_caracteristicas=NUMERO_CARACTERISTI
         # Verificar correlação com features já selecionadas
         alta_correlacao = False
         for selecionada in caracteristicas_selecionadas:
-            if correlation_matrix.loc[caracteristica, selecionada] > 0.85:  # Limite mais rigoroso
+            if correlation_matrix.loc[caracteristica, selecionada] > 0.85:
                 alta_correlacao = True
                 break
                 
@@ -142,7 +141,6 @@ def SelecionarCaracteristicas(df_treino, num_caracteristicas=NUMERO_CARACTERISTI
         print(f"   {i:2d}. {feat} (corr: {corr:.4f})")
     
     return caracteristicas_selecionadas
-# ===================== SELECIONAR CARACTERÍSTICAS (COM MUTUAL INFORMATION) =====================
 
 def PrepararDados(df_treino, df_teste, caracteristicas, janela_temporal=JANELA_TEMPORAL):
     """Versão com tratamento de outliers"""
@@ -173,29 +171,7 @@ def PrepararDados(df_treino, df_teste, caracteristicas, janela_temporal=JANELA_T
     print(f"   Escalonador: RobustScaler (resistente a outliers)")
     
     return X_treino, X_teste, y_treino, y_teste, escalonador_y_treino
-# ===================== MODELO LSTM =====================
-def CriarModeloLSTM(formato_entrada):
-    modelo = Sequential([
-        LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
-        LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
-        LSTM(64, return_sequences=False, dropout=0.2),
-        Dense(128, activation='relu'),
-        Dropout(0.4),
-        Dense(64, activation='relu'),
-        Dropout(0.3),
-        Dense(32, activation='relu'),
-        Dense(1)
-    ])
-    modelo.compile(
-        optimizer=Adam(learning_rate=0.001),
-        loss='mse',
-        metrics=['mae']
-    )
-    
-    print("✅ Modelo LSTM criado com sucesso")
-    return modelo
 
-# ===================== APLICAÇÃO DE TAXAS =====================
 def AplicarTaxasCompra(valor_compra):
     taxas_compra = TAXA_CORRETAGEM + TAXA_EMOLUMENTOS + TAXA_LIQUIDACAO
     valor_com_taxas = valor_compra * (1 - taxas_compra)
@@ -217,7 +193,6 @@ def AplicarTaxasVenda(valor_venda_bruto, custo_compra, eh_day_trade):
     taxas_pagas = valor_venda_bruto - valor_venda_liquido - imposto
     return max(valor_venda_liquido, 0), taxas_pagas, imposto
 
-# ===================== BACKTEST COM GESTÃO DE RISCO =====================
 def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
     """Versão com critérios de entrada mais inteligentes"""
     
@@ -274,8 +249,6 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
             if stop_loss or take_profit or saida_previsao or saida_tempo or saida_rsi_alto:
                 sinal = "VENDER"
                 motivo = "STOP_LOSS" if stop_loss else "TAKE_PROFIT" if take_profit else "PREVISAO" if saida_previsao else "TEMPO" if saida_tempo else "RSI_ALTO"
-                
-        # ... (restante do código mantido igual) ...
 
         # EXECUTAR COMPRA
         if sinal == "COMPRAR":
@@ -299,6 +272,7 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
                 total_taxas_pagas += taxas_compra
                 
                 print(f"💰 COMPRA EXECUTADA: {data_atual} | Preço: {preco_atual:.2f} | Capital: R$ {capital_para_trade:.2f}")
+
         # EXECUTAR VENDA
         elif sinal == "VENDER" and acoes > 0:
             valor_venda_bruto = acoes * preco_atual
@@ -369,7 +343,6 @@ def BacktestComTaxas(df, datas, previsoes, capital_inicial=CAPITAL_INICIAL):
     
     return curva_patrimonio, trades, capital, total_taxas_pagas, total_impostos_pagos
 
-# ===================== ANALISAR TRADES =====================
 def AnalisarTrades(trades):
     if len(trades) < 2:
         return {
@@ -428,38 +401,320 @@ def AnalisarTrades(trades):
         "trades_fechamento_forcado": 0, "trades": []
     }
 
-# ===================== VALIDAR PREVISÕES =====================
-def ValidarPrevisoes(valores_reais, previsoes, datas_teste):
-    plt.figure(figsize=(12, 6))
-    plt.plot(datas_teste, valores_reais, label='Valor Real', linewidth=2, color='blue')
-    plt.plot(datas_teste, previsoes, label='Previsão LSTM', linewidth=1, alpha=0.7, color='red')
-    plt.title(f'Comparação: Preço Real vs Previsão LSTM ({TICKER})')
+# ===================== MODELOS =====================
+
+def CriarModeloLSTM(formato_entrada):
+    modelo = Sequential([
+        LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
+        LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2),
+        LSTM(64, return_sequences=False, dropout=0.2),
+        Dense(128, activation='relu'),
+        Dropout(0.4),
+        Dense(64, activation='relu'),
+        Dropout(0.3),
+        Dense(32, activation='relu'),
+        Dense(1)
+    ])
+    modelo.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='mse',
+        metrics=['mae']
+    )
+    return modelo
+
+def CriarModeloCNN1D(formato_entrada):
+    modelo = Sequential([
+        Conv1D(filters=64, kernel_size=3, activation='relu', padding='same', 
+               input_shape=formato_entrada),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2),
+        Dropout(0.3),
+        
+        Conv1D(filters=32, kernel_size=2, activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2),
+        Dropout(0.3),
+        
+        Conv1D(filters=16, kernel_size=2, activation='relu', padding='same'),
+        BatchNormalization(),
+        GlobalAveragePooling1D(),
+        Dropout(0.2),
+        
+        Dense(32, activation='relu'),
+        Dropout(0.2),
+        Dense(16, activation='relu'),
+        Dropout(0.1),
+        Dense(1)
+    ])
+    modelo.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='mse',
+        metrics=['mae']
+    )
+    return modelo
+
+# ===================== EXECUTORES DOS MODELOS =====================
+
+def ExecutarLSTM(df_treino, df_teste, caracteristicas):
+    print(f"\n🎯 INICIANDO MODELO LSTM")
+    
+    X_treino, X_teste, y_treino, y_teste, escalonador_y = PrepararDados(df_treino, df_teste, caracteristicas)
+
+    modelo = CriarModeloLSTM((X_treino.shape[1], X_treino.shape[2]))
+    print("✅ Modelo LSTM criado")
+
+    print(f"🔥 Treinando LSTM...")
+    historico = modelo.fit(
+        X_treino, y_treino,
+        epochs=EPOCAS,
+        batch_size=TAMANHO_LOTE,
+        validation_data=(X_teste, y_teste),
+        verbose=0,
+        callbacks=[EarlyStopping(patience=20, restore_best_weights=True, min_delta=0.001)]
+    )
+
+    previsoes_escalonadas = modelo.predict(X_teste, verbose=0)
+    previsoes = escalonador_y.inverse_transform(previsoes_escalonadas).flatten()
+    valores_reais = escalonador_y.inverse_transform(y_teste).flatten()
+    datas_teste = df_teste.index[JANELA_TEMPORAL:JANELA_TEMPORAL + len(previsoes)]
+
+    # Métricas
+    mse = mean_squared_error(valores_reais, previsoes)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(valores_reais, previsoes)
+    mape = mean_absolute_percentage_error(valores_reais, previsoes) * 100
+    r2 = r2_score(valores_reais, previsoes)
+
+    # Backtest
+    curva_patrimonio, trades, capital_final, total_taxas, total_impostos = BacktestComTaxas(
+        df_teste, datas_teste, previsoes, CAPITAL_INICIAL
+    )
+    
+    retorno_total = (capital_final - CAPITAL_INICIAL) / CAPITAL_INICIAL * 100
+    analise_trades = AnalisarTrades(trades)
+
+    return {
+        "nome": "LSTM",
+        "previsoes": previsoes,
+        "valores_reais": valores_reais,
+        "datas_teste": datas_teste,
+        "curva_patrimonio": curva_patrimonio,
+        "metricas": {"MAE": mae, "MAPE": mape, "RMSE": rmse, "R2": r2},
+        "trades": analise_trades,
+        "capital_final": capital_final,
+        "retorno_total": retorno_total,
+        "historico": historico.history
+    }
+
+def ExecutarCNN1D(df_treino, df_teste, caracteristicas):
+    print(f"\n🎯 INICIANDO MODELO CNN1D")
+    
+    X_treino, X_teste, y_treino, y_teste, escalonador_y = PrepararDados(df_treino, df_teste, caracteristicas)
+
+    modelo = CriarModeloCNN1D((X_treino.shape[1], X_treino.shape[2]))
+    print("✅ Modelo CNN1D criado")
+
+    print(f"🔥 Treinando CNN1D...")
+    historico = modelo.fit(
+        X_treino, y_treino,
+        epochs=EPOCAS,
+        batch_size=TAMANHO_LOTE,
+        validation_data=(X_teste, y_teste),
+        verbose=0,
+        callbacks=[EarlyStopping(patience=20, restore_best_weights=True, min_delta=0.001)]
+    )
+
+    previsoes_escalonadas = modelo.predict(X_teste, verbose=0)
+    previsoes = escalonador_y.inverse_transform(previsoes_escalonadas).flatten()
+    valores_reais = escalonador_y.inverse_transform(y_teste).flatten()
+    datas_teste = df_teste.index[JANELA_TEMPORAL:JANELA_TEMPORAL + len(previsoes)]
+
+    # Métricas
+    mse = mean_squared_error(valores_reais, previsoes)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(valores_reais, previsoes)
+    mape = mean_absolute_percentage_error(valores_reais, previsoes) * 100
+    r2 = r2_score(valores_reais, previsoes)
+
+    # Backtest
+    curva_patrimonio, trades, capital_final, total_taxas, total_impostos = BacktestComTaxas(
+        df_teste, datas_teste, previsoes, CAPITAL_INICIAL
+    )
+    
+    retorno_total = (capital_final - CAPITAL_INICIAL) / CAPITAL_INICIAL * 100
+    analise_trades = AnalisarTrades(trades)
+
+    return {
+        "nome": "CNN1D",
+        "previsoes": previsoes,
+        "valores_reais": valores_reais,
+        "datas_teste": datas_teste,
+        "curva_patrimonio": curva_patrimonio,
+        "metricas": {"MAE": mae, "MAPE": mape, "RMSE": rmse, "R2": r2},
+        "trades": analise_trades,
+        "capital_final": capital_final,
+        "retorno_total": retorno_total,
+        "historico": historico.history
+    }
+
+# ===================== GRÁFICOS COMPARATIVOS =====================
+
+def GerarGraficosComparativos(resultados_lstm, resultados_cnn, df_teste):
+    print(f"\n📊 GERANDO GRÁFICOS COMPARATIVOS...")
+    
+    # Dados Buy & Hold
+    retorno_buy_hold = (df_teste['close'].iloc[-1] / df_teste['close'].iloc[0] - 1) * 100
+    bh_dates = np.linspace(0, len(resultados_lstm['curva_patrimonio'])-1, len(df_teste))
+    bh_values = CAPITAL_INICIAL * (df_teste['close'] / df_teste['close'].iloc[0])
+    
+    # === 1️⃣ COMPARAÇÃO DE RETORNOS ===
+    plt.figure(figsize=(14, 8))
+    
+    plt.subplot(2, 3, 1)
+    modelos = ['LSTM', 'CNN1D', 'Buy & Hold']
+    retornos = [resultados_lstm['retorno_total'], resultados_cnn['retorno_total'], retorno_buy_hold]
+    cores = ['blue', 'red', 'green']
+    bars = plt.bar(modelos, retornos, color=cores, alpha=0.7)
+    plt.title('Comparação de Retornos Totais')
+    plt.ylabel('Retorno (%)')
+    plt.grid(alpha=0.3)
+    
+    # Adicionar valores nas barras
+    for bar, retorno in zip(bars, retornos):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + (1 if retorno >= 0 else -3),
+                f'{retorno:.2f}%', ha='center', va='bottom' if retorno >= 0 else 'top', fontweight='bold')
+
+    # === 2️⃣ CURVAS DE PATRIMÔNIO ===
+    plt.subplot(2, 3, 2)
+    plt.plot(resultados_lstm['curva_patrimonio'], label='LSTM', linewidth=2, color='blue')
+    plt.plot(resultados_cnn['curva_patrimonio'], label='CNN1D', linewidth=2, color='red')
+    plt.plot(bh_dates, bh_values, label='Buy & Hold', linestyle='--', linewidth=2, color='green')
+    plt.title('Curvas de Patrimônio')
+    plt.xlabel('Período')
+    plt.ylabel('Capital (R$)')
+    plt.legend()
+    plt.grid(alpha=0.3)
+
+    # === 3️⃣ MÉTRICAS DE REGRESSÃO ===
+    plt.subplot(2, 3, 3)
+    metricas = ['MAE', 'RMSE', 'R²']
+    lstm_vals = [resultados_lstm['metricas']['MAE'], resultados_lstm['metricas']['RMSE'], resultados_lstm['metricas']['R2']]
+    cnn_vals = [resultados_cnn['metricas']['MAE'], resultados_cnn['metricas']['RMSE'], resultados_cnn['metricas']['R2']]
+    
+    x = np.arange(len(metricas))
+    width = 0.35
+    plt.bar(x - width/2, lstm_vals, width, label='LSTM', alpha=0.7, color='blue')
+    plt.bar(x + width/2, cnn_vals, width, label='CNN1D', alpha=0.7, color='red')
+    plt.title('Métricas de Regressão')
+    plt.xticks(x, metricas)
+    plt.legend()
+    plt.grid(alpha=0.3)
+
+    # === 4️⃣ TAXA DE ACERTO E TRADES ===
+    plt.subplot(2, 3, 4)
+    categorias = ['Taxa Acerto', 'Total Trades', 'Lucro Médio']
+    lstm_trade = [resultados_lstm['trades']['taxa_acerto'], resultados_lstm['trades']['total_trades'], resultados_lstm['trades']['lucro_medio_liquido']]
+    cnn_trade = [resultados_cnn['trades']['taxa_acerto'], resultados_cnn['trades']['total_trades'], resultados_cnn['trades']['lucro_medio_liquido']]
+    
+    x = np.arange(len(categorias))
+    plt.bar(x - width/2, lstm_trade, width, label='LSTM', alpha=0.7, color='blue')
+    plt.bar(x + width/2, cnn_trade, width, label='CNN1D', alpha=0.7, color='red')
+    plt.title('Estatísticas de Trading')
+    plt.xticks(x, categorias)
+    plt.legend()
+    plt.grid(alpha=0.3)
+
+    # === 5️⃣ PREVISÕES vs REAL ===
+    plt.subplot(2, 3, 5)
+    plt.plot(resultados_lstm['datas_teste'], resultados_lstm['valores_reais'], label='Real', linewidth=2, color='black')
+    plt.plot(resultados_lstm['datas_teste'], resultados_lstm['previsoes'], label='LSTM', linewidth=1, alpha=0.8, color='blue')
+    plt.plot(resultados_cnn['datas_teste'], resultados_cnn['previsoes'], label='CNN1D', linewidth=1, alpha=0.8, color='red')
+    plt.title('Previsões vs Valor Real')
+    plt.xlabel('Data')
+    plt.ylabel('Preço (R$)')
     plt.legend()
     plt.xticks(rotation=45)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-    
-    # Calcular diferença percentual
-    diferenca_pct = np.abs((previsoes - valores_reais) / valores_reais) * 100
-    acerto_direcional = np.mean(np.sign(np.diff(valores_reais)) == np.sign(np.diff(previsoes))) * 100
-    
-    print(f"📊 VALIDAÇÃO DAS PREVISÕES:")
-    print(f"   Diferença média: {np.mean(diferenca_pct):.2f}%")
-    print(f"   Acerto direcional: {acerto_direcional:.1f}%")
-    print(f"   Correlação: {np.corrcoef(valores_reais, previsoes)[0,1]:.4f}")
+    plt.grid(alpha=0.3)
 
-# ===================== EXECUTOR LSTM =====================
-def ExecutarLSTM():
-    print(f"\n🎯 INICIANDO MODELO LSTM PARA {TICKER}")
-    print("=" * 60)
+    # === 6️⃣ EVOLUÇÃO DO TREINAMENTO ===
+    plt.subplot(2, 3, 6)
+    plt.plot(resultados_lstm['historico']['loss'], label='LSTM Treino', alpha=0.7, color='blue')
+    plt.plot(resultados_lstm['historico']['val_loss'], label='LSTM Validação', linestyle='--', alpha=0.7, color='lightblue')
+    plt.plot(resultados_cnn['historico']['loss'], label='CNN1D Treino', alpha=0.7, color='red')
+    plt.plot(resultados_cnn['historico']['val_loss'], label='CNN1D Validação', linestyle='--', alpha=0.7, color='pink')
+    plt.title('Evolução da Loss no Treinamento')
+    plt.xlabel('Época')
+    plt.ylabel('Loss (MSE)')
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.yscale('log')
+
+    plt.tight_layout()
+    plt.savefig(f"COMPARACAO_LSTM_vs_CNN1D_{TICKER}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # === GRÁFICO ADICIONAL: DRAWDOWN COMPARATIVO ===
+    plt.figure(figsize=(12, 6))
     
-    # Baixar dados
+    # Calcular drawdown para LSTM
+    peak_lstm = np.maximum.accumulate(resultados_lstm['curva_patrimonio'])
+    drawdown_lstm = (peak_lstm - resultados_lstm['curva_patrimonio']) / peak_lstm * 100
+    
+    # Calcular drawdown para CNN1D
+    peak_cnn = np.maximum.accumulate(resultados_cnn['curva_patrimonio'])
+    drawdown_cnn = (peak_cnn - resultados_cnn['curva_patrimonio']) / peak_cnn * 100
+    
+    plt.plot(drawdown_lstm, label='LSTM Drawdown', linewidth=2, color='blue', alpha=0.7)
+    plt.plot(drawdown_cnn, label='CNN1D Drawdown', linewidth=2, color='red', alpha=0.7)
+    plt.title('Comparação de Drawdown (Risco)')
+    plt.xlabel('Período')
+    plt.ylabel('Drawdown (%)')
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(f"COMPARACAO_DRAWDOWN_{TICKER}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # === GRÁFICO ADICIONAL: DISTRIBUIÇÃO DOS RETORNOS POR TRADE ===
+    if resultados_lstm['trades']['total_trades'] > 0 and resultados_cnn['trades']['total_trades'] > 0:
+        plt.figure(figsize=(12, 5))
+        
+        retornos_lstm = [t['retorno_liquido'] for t in resultados_lstm['trades']['trades']]
+        retornos_cnn = [t['retorno_liquido'] for t in resultados_cnn['trades']['trades']]
+        
+        plt.subplot(1, 2, 1)
+        plt.hist(retornos_lstm, bins=20, alpha=0.7, color='blue', label='LSTM')
+        plt.axvline(np.mean(retornos_lstm), color='darkblue', linestyle='--', linewidth=2, label=f'Média: {np.mean(retornos_lstm):.2f}%')
+        plt.title('Distribuição Retornos - LSTM')
+        plt.xlabel('Retorno por Trade (%)')
+        plt.ylabel('Frequência')
+        plt.legend()
+        plt.grid(alpha=0.3)
+        
+        plt.subplot(1, 2, 2)
+        plt.hist(retornos_cnn, bins=20, alpha=0.7, color='red', label='CNN1D')
+        plt.axvline(np.mean(retornos_cnn), color='darkred', linestyle='--', linewidth=2, label=f'Média: {np.mean(retornos_cnn):.2f}%')
+        plt.title('Distribuição Retornos - CNN1D')
+        plt.xlabel('Retorno por Trade (%)')
+        plt.ylabel('Frequência')
+        plt.legend()
+        plt.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(f"COMPARACAO_DISTRIBUICAO_RETORNOS_{TICKER}.png", dpi=300, bbox_inches='tight')
+        plt.show()
+
+# ===================== EXECUÇÃO PRINCIPAL =====================
+
+def ExecutarComparacaoCompleta():
+    print(f"\n🚀 INICIANDO COMPARAÇÃO COMPLETA LSTM vs CNN1D")
+    print("=" * 70)
+    
+    # Baixar e preparar dados
     dados = BaixarDados(TICKER, "2019-01-01", DATA_FIM_TESTE)
     if dados is None:
         return None
 
-    # Preparar dados
     df = dados[['Open','High','Low','Close','Volume']].copy()
     df.columns = ['open','high','low','close','volume']
     df = CalcularIndicadores(df)
@@ -472,245 +727,58 @@ def ExecutarLSTM():
         print("❌ Dados de treino ou teste vazios")
         return None
 
-    # Verificar separação
-    print(f"\n📊 VERIFICAÇÃO SEPARAÇÃO TREINO/TESTE")
-    print(f"   Treino: {df_treino.index.min()} to {df_treino.index.max()} ({len(df_treino)} dias)")
-    print(f"   Teste:  {df_teste.index.min()} to {df_teste.index.max()} ({len(df_teste)} dias)")
-    print(f"   ✅ Teste começa após treino: {df_teste.index.min() > df_treino.index.max()}")
+    print(f"\n📊 SEPARAÇÃO TREINO/TESTE:")
+    print(f"   Treino: {len(df_treino)} dias | Teste: {len(df_teste)} dias")
 
-    # Selecionar características e preparar dados
+    # Selecionar características
     caracteristicas = SelecionarCaracteristicas(df_treino)
-    X_treino, X_teste, y_treino, y_teste, escalonador_y = PrepararDados(df_treino, df_teste, caracteristicas)
 
-    # Criar e treinar modelo
-    modelo = CriarModeloLSTM((X_treino.shape[1], X_treino.shape[2]))
+    # Executar ambos os modelos
+    resultados_lstm = ExecutarLSTM(df_treino, df_teste, caracteristicas)
+    resultados_cnn = ExecutarCNN1D(df_treino, df_teste, caracteristicas)
 
-    print(f"\n🔥 Treinando modelo LSTM...")
-    historico = modelo.fit(
-        X_treino, y_treino,
-        epochs=EPOCAS,
-        batch_size=TAMANHO_LOTE,
-        validation_data=(X_teste, y_teste),
-        verbose=1,
-        callbacks=[EarlyStopping(patience=20, restore_best_weights=True, min_delta=0.001)]
-    )
-
-    # Fazer previsões
-    print(f"\n📈 Fazendo previsões...")
-    previsoes_escalonadas = modelo.predict(X_teste, verbose=0)
-    previsoes = escalonador_y.inverse_transform(previsoes_escalonadas).flatten()
-    valores_reais = escalonador_y.inverse_transform(y_teste).flatten()
-    datas_teste = df_teste.index[JANELA_TEMPORAL:JANELA_TEMPORAL + len(previsoes)]
-
-    # Métricas de regressão
-    mse = mean_squared_error(valores_reais, previsoes)
-    rmse = np.sqrt(mse)
-    mae = mean_absolute_error(valores_reais, previsoes)
-    mape = mean_absolute_percentage_error(valores_reais, previsoes) * 100
-    r2 = r2_score(valores_reais, previsoes)
-
-    print(f"\n✅ ========== MÉTRICAS DE REGRESSÃO (LSTM) ==========")
-    print(f"MAE : R$ {mae:.2f}")
-    print(f"MAPE: {mape:.2f}%")
-    print(f"MSE : {mse:.2f}")
-    print(f"RMSE: R$ {rmse:.2f}")
-    print(f"R²  : {r2:.4f}")
-
-    # Validar previsões
-    ValidarPrevisoes(valores_reais, previsoes, datas_teste)
-
-    # Backtest com taxas
-    print(f"\n💼 Executando backtest com gestão de risco...")
-    curva_patrimonio, trades, capital_final, total_taxas, total_impostos = BacktestComTaxas(
-        df_teste, datas_teste, previsoes, CAPITAL_INICIAL
-    )
-    
-    retorno_total = (capital_final - CAPITAL_INICIAL) / CAPITAL_INICIAL * 100
+    # Calcular Buy & Hold
     retorno_buy_hold = (df_teste['close'].iloc[-1] / df_teste['close'].iloc[0] - 1) * 100
-    analise_trades = AnalisarTrades(trades)
 
-    print(f"\n💰 ========== RESULTADOS BACKTEST COM TAXAS (LSTM) ==========")
-    print(f"Capital inicial: R$ {CAPITAL_INICIAL:.2f}")
-    print(f"Capital final:   R$ {capital_final:.2f}")
-    print(f"Retorno líquido: {retorno_total:+.2f}%")
-    print(f"Buy & Hold:      {retorno_buy_hold:+.2f}%")
+    # Gerar gráficos comparativos
+    GerarGraficosComparativos(resultados_lstm, resultados_cnn, df_teste)
+
+    # Relatório final
+    print(f"\n🎯 ========== RELATÓRIO FINAL DE COMPARAÇÃO ==========")
+    print(f"📈 RETORNOS:")
+    print(f"   LSTM:       {resultados_lstm['retorno_total']:+.2f}%")
+    print(f"   CNN1D:      {resultados_cnn['retorno_total']:+.2f}%")
+    print(f"   Buy & Hold: {retorno_buy_hold:+.2f}%")
     
-    print(f"\n📊 --- ESTATÍSTICAS DE TRADING ---")
-    print(f"Nº Total de Trades:    {analise_trades['total_trades']}")
-    print(f"Taxa de Acerto:        {analise_trades['taxa_acerto']:.1f}%")
-    print(f"Lucro médio bruto:     {analise_trades['lucro_medio_bruto']:.2f}%")
-    print(f"Lucro médio líquido:   {analise_trades['lucro_medio_liquido']:.2f}%")
+    print(f"\n📊 MÉTRICAS DE PREVISÃO:")
+    print(f"   MAE  - LSTM: R$ {resultados_lstm['metricas']['MAE']:.2f} | CNN1D: R$ {resultados_cnn['metricas']['MAE']:.2f}")
+    print(f"   RMSE - LSTM: R$ {resultados_lstm['metricas']['RMSE']:.2f} | CNN1D: R$ {resultados_cnn['metricas']['RMSE']:.2f}")
+    print(f"   R²   - LSTM: {resultados_lstm['metricas']['R2']:.4f} | CNN1D: {resultados_cnn['metricas']['R2']:.4f}")
     
-    if analise_trades['total_trades'] > 0:
-        print(f"Dias médio por trade:  {analise_trades['dias_medio_posicao']:.1f}")
+    print(f"\n💼 ESTATÍSTICAS DE TRADING:")
+    print(f"   Taxa Acerto - LSTM: {resultados_lstm['trades']['taxa_acerto']:.1f}% | CNN1D: {resultados_cnn['trades']['taxa_acerto']:.1f}%")
+    print(f"   Total Trades - LSTM: {resultados_lstm['trades']['total_trades']} | CNN1D: {resultados_cnn['trades']['total_trades']}")
+    print(f"   Lucro Médio - LSTM: {resultados_lstm['trades']['lucro_medio_liquido']:.2f}% | CNN1D: {resultados_cnn['trades']['lucro_medio_liquido']:.2f}%")
+    
+    print(f"\n💰 CAPITAL FINAL:")
+    print(f"   LSTM:  R$ {resultados_lstm['capital_final']:.2f}")
+    print(f"   CNN1D: R$ {resultados_cnn['capital_final']:.2f}")
+
+    # Determinar vencedor
+    if resultados_lstm['retorno_total'] > resultados_cnn['retorno_total']:
+        vencedor = "LSTM"
+    elif resultados_cnn['retorno_total'] > resultados_lstm['retorno_total']:
+        vencedor = "CNN1D"
     else:
-        print(f"Dias médio por trade:  0.0")
-        
-    print(f"Total em taxas:        R$ {total_taxas:.2f}")
-    print(f"Total em impostos:     R$ {total_impostos:.2f}")
-    print(f"Taxa total/% capital:  {(total_taxas/CAPITAL_INICIAL)*100:.2f}%")
-
-    # Análise de drawdown
-    if len(curva_patrimonio) > 0:
-        peak = np.maximum.accumulate(curva_patrimonio)
-        drawdown = (peak - curva_patrimonio) / peak * 100
-        max_drawdown = np.max(drawdown) if len(drawdown) > 0 else 0
-    else:
-        max_drawdown = 0
-
-    print(f"\n⚠️ --- ANÁLISE DE RISCO ---")
-    print(f"Max Drawdown:         {max_drawdown:.2f}%")
-    print(f"Trades Fechamento:    {analise_trades.get('trades_fechamento_forcado', 0)}")
-
-    # Gráfico final
-    plt.figure(figsize=(12, 6))
-    plt.plot(curva_patrimonio, label='LSTM com Gestão de Risco', linewidth=2, color='green')
+        vencedor = "EMPATE"
     
-    # Buy & Hold
-    bh_dates = np.linspace(0, len(curva_patrimonio)-1, len(df_teste))
-    bh_values = CAPITAL_INICIAL * (df_teste['close'] / df_teste['close'].iloc[0])
-    plt.plot(bh_dates, bh_values, label='Buy & Hold', linestyle='--', linewidth=2, color='blue')
+    print(f"\n🏆 VENCEDOR: {vencedor}")
     
-    plt.title(f'Desempenho Estratégia LSTM vs Buy & Hold ({TICKER})')
-    plt.xlabel('Período de Teste')
-    plt.ylabel('Capital (R$)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-    # ==============================================================
-    # === GRÁFICOS COMPLETOS PARA O TCC - ANÁLISE VISUAL DO LSTM ===
-    # ==============================================================
-
-    print("\n📊 Gerando gráficos completos para o TCC...")
-
-    # === 1️⃣ Gráfico: Preço Real vs Previsão ===
-    plt.figure(figsize=(14,6))
-    plt.plot(datas_teste, valores_reais, label='Preço Real', linewidth=2, color='blue')
-    plt.plot(datas_teste, previsoes, label='Previsão LSTM', linewidth=1.8, color='red', alpha=0.8)
-    plt.title(f'Comparação: Preço Real vs Previsão ({TICKER})')
-    plt.xlabel('Data')
-    plt.ylabel('Preço de Fechamento (R$)')
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_previsao_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 2️⃣ Gráfico: Erro Absoluto ao Longo do Tempo ===
-    erros = np.abs(valores_reais - previsoes)
-    plt.figure(figsize=(12,5))
-    plt.plot(datas_teste, erros, label='Erro Absoluto', color='orange')
-    plt.title(f'Erro Absoluto entre Preço Real e Previsão ({TICKER})')
-    plt.xlabel('Data')
-    plt.ylabel('Erro (R$)')
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_erro_absoluto_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 3️⃣ Gráfico: Dispersão Preço Real vs Previsto ===
-    plt.figure(figsize=(6,6))
-    plt.scatter(valores_reais, previsoes, alpha=0.6, color='purple')
-    plt.plot([min(valores_reais), max(valores_reais)],
-             [min(valores_reais), max(valores_reais)], 'r--', label='Linha Ideal')
-    plt.title(f'Dispersão: Valor Real vs Previsto ({TICKER})')
-    plt.xlabel('Valor Real (R$)')
-    plt.ylabel('Valor Previsto (R$)')
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_dispersao_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 4️⃣ Gráfico: Distribuição dos Erros ===
-    plt.figure(figsize=(8,5))
-    plt.hist(valores_reais - previsoes, bins=40, color='teal', alpha=0.7)
-    plt.title(f'Distribuição dos Erros (Real - Previsto) ({TICKER})')
-    plt.xlabel('Erro (R$)')
-    plt.ylabel('Frequência')
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_distribuicao_erros_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 5️⃣ Gráfico: Curva de Capital (Estratégia vs Buy & Hold) ===
-    plt.figure(figsize=(12,6))
-    plt.plot(curva_patrimonio, label='LSTM com Gestão de Risco', linewidth=2, color='green')
-    bh_values = CAPITAL_INICIAL * (df_teste['close'] / df_teste['close'].iloc[0])
-    plt.plot(np.linspace(0, len(curva_patrimonio)-1, len(bh_values)),
-             bh_values, label='Buy & Hold', linestyle='--', linewidth=2, color='blue')
-    plt.title(f'Curva de Capital - Estratégia LSTM vs Buy & Hold ({TICKER})')
-    plt.xlabel('Período de Teste')
-    plt.ylabel('Capital (R$)')
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_curva_capital_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 6️⃣ Gráfico: Retorno Acumulado (%) ===
-    retorno_acum = (pd.Series(curva_patrimonio) / CAPITAL_INICIAL - 1) * 100
-    plt.figure(figsize=(12,5))
-    plt.plot(retorno_acum, label='Retorno Acumulado (%)', linewidth=2, color='darkgreen')
-    plt.title(f'Retorno Acumulado da Estratégia LSTM ({TICKER})')
-    plt.xlabel('Período')
-    plt.ylabel('Retorno (%)')
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(f"grafico_retorno_acumulado_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    # === 7️⃣ Gráfico: Drawdown (%) ===
-    if len(curva_patrimonio) > 0:
-        peak = np.maximum.accumulate(curva_patrimonio)
-        drawdown = (peak - curva_patrimonio) / peak * 100
-        plt.figure(figsize=(12,5))
-        plt.fill_between(range(len(drawdown)), drawdown, color='red', alpha=0.4)
-        plt.title(f'Drawdown (%) - Análise de Risco LSTM ({TICKER})')
-        plt.xlabel('Período')
-        plt.ylabel('Perda Máxima (%)')
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"grafico_drawdown_LSTM_{TICKER}.png", dpi=300)
-        plt.show()
-
-    # === 8️⃣ Gráfico: Lucro / Prejuízo por Trade ===
-    if analise_trades["total_trades"] > 0:
-        lucros = [t['retorno_liquido'] for t in analise_trades["trades"]]
-        plt.figure(figsize=(8,5))
-        plt.bar(range(len(lucros)), lucros, color=['green' if x > 0 else 'red' for x in lucros])
-        plt.title(f'Lucro ou Prejuízo por Trade ({TICKER})')
-        plt.xlabel('Trade #')
-        plt.ylabel('Retorno (%)')
-        plt.axhline(0, color='black', linestyle='--')
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(f"grafico_trades_LSTM_{TICKER}.png", dpi=300)
-        plt.show()
-
-    # === 9️⃣ Gráfico: Autocorrelação dos Retornos ===
-    curva_series = pd.Series(curva_patrimonio).pct_change().dropna()
-    plt.figure(figsize=(8,4))
-    plt.acorr(curva_series - curva_series.mean(), maxlags=20, color='brown')
-    plt.title(f'Autocorrelação dos Retornos LSTM ({TICKER})')
-    plt.xlabel('Defasagem (dias)')
-    plt.ylabel('Correlação')
-    plt.tight_layout()
-    plt.savefig(f"grafico_autocorrelacao_LSTM_{TICKER}.png", dpi=300)
-    plt.show()
-
-    print("✅ Gráficos do modelo LSTM gerados e salvos em alta resolução (300 dpi).")
-
     return {
-        "retorno_total": retorno_total,
-        "retorno_buy_hold": retorno_buy_hold,
-        "metricas": {"MAE": mae, "MAPE": mape, "RMSE": rmse, "R2": r2},
-        "trades": analise_trades,
-        "capital_final": capital_final
+        "lstm": resultados_lstm,
+        "cnn": resultados_cnn,
+        "buy_hold": retorno_buy_hold,
+        "vencedor": vencedor
     }
 
 # ===================== EXECUÇÃO =====================
@@ -718,16 +786,13 @@ if __name__ == "__main__":
     np.random.seed(42)
     tf.random.set_seed(42)
     
-    print("🚀 INICIANDO EXECUÇÃO DO MODELO LSTM CORRIGIDO")
-    print("=" * 70)
-    
-    resultados = ExecutarLSTM()
+    resultados = ExecutarComparacaoCompleta()
     
     if resultados:
-        print(f"\n🎉 ✅ Execução concluída com sucesso!")
-        print(f"📈 Retorno Estratégia: {resultados['retorno_total']:+.2f}%")
-        print(f"📊 Retorno Buy&Hold:  {resultados['retorno_buy_hold']:+.2f}%")
-        print(f"🎯 Taxa de Acerto:    {resultados['trades']['taxa_acerto']:.1f}%")
-        print(f"💰 Capital Final:     R$ {resultados['capital_final']:.2f}")
+        print(f"\n🎉 ✅ COMPARAÇÃO CONCLUÍDA COM SUCESSO!")
+        print(f"🏆 Modelo vencedor: {resultados['vencedor']}")
+        print(f"📈 LSTM: {resultados['lstm']['retorno_total']:+.2f}%")
+        print(f"📊 CNN1D: {resultados['cnn']['retorno_total']:+.2f}%")
+        print(f"📉 Buy & Hold: {resultados['buy_hold']:+.2f}%")
     else:
-        print(f"\n💥 ❌ Erro na execução")
+        print(f"\n💥 ❌ Erro na execução da comparação")
