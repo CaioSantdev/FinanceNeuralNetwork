@@ -97,6 +97,13 @@ class TradingLSTMModel:
             Dropout(0.1),
             Dense(1)
         ])
+        # self.model = Sequential([
+        #   LSTM(500, return_sequences=True, input_shape=input_shape),
+        #   Dropout(0.3),
+        #   LSTM(500, return_sequences=False),
+        #   Dropout(0.3),
+        #   Dense(1)
+        # ])
         self.model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         return self.model
     
@@ -286,8 +293,9 @@ class TradingLSTMModel:
         # Taxa de compra e venda
         taxa_compra = self.initial_capital * self.taxa_corretagem
         taxa_venda = final_value * self.taxa_corretagem
+        taxa_retirada = final_value * 0.01  # 1% de retirada final
         
-        final_value_net = final_value - taxa_compra - taxa_venda
+        final_value_net = final_value - (taxa_compra + taxa_venda + taxa_retirada)
         
         # Curva de equity do buy & hold
         bh_curve = [self.initial_capital]
@@ -334,21 +342,48 @@ class TradingLSTMModel:
         # === GRÁFICOS COMPLETOS ===
         plt.figure(figsize=(15, 12))
         
-        # 1️⃣ Previsões vs Real
+      # 1️⃣ Previsões vs Real com pontos de trade
         plt.subplot(3, 2, 1)
         plt.plot(y_test, label='Real', color='blue', linewidth=1)
         plt.plot(test_predict, label='Previsto', color='red', linewidth=1, alpha=0.7)
+
+        # Adicionar setas de compra e venda (com base nas datas)
+        for trade in trades:
+            if trade['date'] in self.test_dates:
+                idx = np.where(self.test_dates == trade['date'])[0]
+                if len(idx) > 0:
+                    idx = idx[0]
+                    price = y_test[idx]
+                    if trade['action'] == 'BUY':
+                        plt.scatter(idx, price, color='lime', marker='^', s=120, label='Compra' if 'Compra' not in plt.gca().get_legend_handles_labels()[1] else "")
+                    elif 'SELL' in trade['action']:
+                        plt.scatter(idx, price, color='red', marker='v', s=120, label='Venda' if 'Venda' not in plt.gca().get_legend_handles_labels()[1] else "")
+
         plt.title(f'{self.ticker} - Preços Reais vs Previstos (Teste)')
         plt.ylabel('Preço (R$)')
         plt.legend()
         plt.grid(True, alpha=0.3)
 
-        # 2️⃣ Equity Curve - Comparação
+        # 2️⃣ Equity Curve - Comparação + marcações
         plt.subplot(3, 2, 2)
         plt.plot(strategy_equity, label='Estratégia LSTM', color='green', linewidth=2)
         plt.plot(bh_equity, label='Buy & Hold', color='blue', linewidth=2, alpha=0.7)
         plt.axhline(y=self.initial_capital, color='red', linestyle='--', alpha=0.5, label='Capital Inicial')
-        plt.title('Evolução do Patrimônio')
+
+        # 🔽 Marcações de compra e venda
+        buy_points = [i for i, t in enumerate(trades) if t['action'] == 'BUY']
+        sell_points = [i for i, t in enumerate(trades) if 'SELL' in t['action']]
+
+        for trade in trades:
+            idx = np.where(self.test_dates == trade['date'])[0]
+            if len(idx) > 0:
+                idx = idx[0]
+                if trade['action'] == 'BUY':
+                    plt.scatter(idx, strategy_equity[idx], color='lime', marker='^', s=100, label='Compra' if 'Compra' not in plt.gca().get_legend_handles_labels()[1] else "")
+                elif 'SELL' in trade['action']:
+                    plt.scatter(idx, strategy_equity[idx], color='red', marker='v', s=100, label='Venda' if 'Venda' not in plt.gca().get_legend_handles_labels()[1] else "")
+
+        plt.title('Evolução do Patrimônio com Pontos de Trade')
         plt.ylabel('Patrimônio (R$)')
         plt.legend()
         plt.grid(True, alpha=0.3)
@@ -400,6 +435,10 @@ class TradingLSTMModel:
         plt.grid(True, alpha=0.3)
 
         plt.tight_layout()
+        plt.subplots_adjust(hspace=0.4)
+        output_path = f"{self.ticker.replace('.SA', '')}_resultados.png"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"💾 Gráfico salvo como {output_path}")
         plt.show()
 
         return {

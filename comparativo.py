@@ -15,13 +15,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configurações
-<<<<<<< HEAD
-TICKER = "ITUB4.SA"
-DATA_INICIO_TREINO = "2014-01-01"
-=======
+
 TICKER = "BBAS3.SA"
 DATA_INICIO_TREINO = "2020-01-01"
->>>>>>> 7c938ab81cc288fb7b354a7689ef43f03d8a43d1
 DATA_FIM_TREINO = "2023-12-31"
 DATA_INICIO_TESTE = "2024-01-01"
 DATA_FIM_TESTE = "2024-08-31"
@@ -482,14 +478,10 @@ def AnalisarTrades(trades):
 
 def CriarModeloLSTM(formato_entrada):
     modelo = Sequential([
-        LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.1, input_shape=formato_entrada),
-        LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
-        LSTM(32, return_sequences=False, dropout=0.1),
-        Dense(64, activation='relu'),
-        Dropout(0.2),
-        Dense(32, activation='relu'),
+        LSTM(100, return_sequences=True, input_shape=formato_entrada, dropout=0.2),
+        LSTM(50, return_sequences=False, dropout=0.2),
+        Dense(25, activation='relu'),
         Dropout(0.1),
-        Dense(16, activation='relu'),
         Dense(1)
     ])
     modelo.compile(
