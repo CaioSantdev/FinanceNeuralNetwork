@@ -90,20 +90,20 @@ class TradingLSTMModel:
     
     def build_model(self, input_shape):
         """Constrói a arquitetura LSTM otimizada"""
-        # self.model = Sequential([
-        #     LSTM(100, return_sequences=True, input_shape=input_shape, dropout=0.2),
-        #     LSTM(50, return_sequences=False, dropout=0.2),
-        #     Dense(25, activation='relu'),
-        #     Dropout(0.1),
-        #     Dense(1)
-        # ])
         self.model = Sequential([
-          LSTM(500, return_sequences=True, input_shape=input_shape),
-          Dropout(0.3),
-          LSTM(500, return_sequences=False),
-          Dropout(0.3),
-          Dense(1)
+            LSTM(100, return_sequences=True, input_shape=input_shape, dropout=0.2),
+            LSTM(50, return_sequences=False, dropout=0.2),
+            Dense(25, activation='relu'),
+            Dropout(0.1),
+            Dense(1)
         ])
+        # self.model = Sequential([
+        #   LSTM(500, return_sequences=True, input_shape=input_shape),
+        #   Dropout(0.3),
+        #   LSTM(500, return_sequences=False),
+        #   Dropout(0.3),
+        #   Dense(1)
+        # ])
         self.model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         return self.model
     
@@ -158,39 +158,64 @@ class TradingLSTMModel:
         return train_predict_inv, test_predict_inv, y_train_inv, y_test_inv
 
     def generate_signals(self, predictions, actual_prices, dates):
-        """Gera sinais de compra/venda baseados nas previsões reais"""
+        """Gera sinais de compra, venda e venda a descoberto (short selling)."""
         signals = []
         positions = []
-        current_position = 0
+        current_position = 0  # 0 = fora, 1 = comprado, -1 = vendido
 
         for i in range(1, len(predictions)):
             pred_price = predictions[i]
             price_today = actual_prices[i - 1]
-
-            # Agora são valores em reais — podemos medir a variação percentual real
-            pred_diff = ((pred_price - price_today) / price_today) * 100
+            pred_diff = ((pred_price - price_today) / price_today) * 100  # variação %
 
             # Indicadores auxiliares
             rsi = self.data.loc[dates[i], 'RSI'] if dates[i] in self.data.index else 50
             macd = self.data.loc[dates[i], 'MACD'] if dates[i] in self.data.index else 0
             macd_signal = self.data.loc[dates[i], 'MACD_Signal'] if dates[i] in self.data.index else 0
+            ema20 = self.data.loc[dates[i], 'EMA_20'] if dates[i] in self.data.index else 0
+            ema60 = self.data.loc[dates[i], 'EMA_60'] if dates[i] in self.data.index else 0
 
+            # ===============================
+            # 📈 COMPRADO (LONG)
+            # ===============================
             if current_position == 0:
-                if pred_diff > 0.3 and rsi < 70 and macd > macd_signal:
+                # Compra normal (tendência de alta)
+                if pred_diff > 0.2 and rsi < 70 and macd > macd_signal and ema20 > ema60:
                     signals.append('BUY')
                     current_position = 1
+
+                # Venda a descoberto (short) — tendência de baixa
+                elif pred_diff < -0.2 and rsi > 30 and macd < macd_signal and ema20 < ema60:
+                    signals.append('SELL_SHORT')
+                    current_position = -1
                 else:
                     signals.append('HOLD')
-            else:
-                if pred_diff < -0.3 or rsi > 75 or macd < macd_signal:
+
+            # ===============================
+            # 🔼 JÁ COMPRADO
+            # ===============================
+            elif current_position == 1:
+                # Fecha posição comprada se o preço virar
+                if pred_diff < -0.15 or rsi > 75 or macd < macd_signal or ema20 < ema60:
                     signals.append('SELL')
+                    current_position = 0
+                else:
+                    signals.append('HOLD')
+
+            # ===============================
+            # 🔽 JÁ VENDIDO (SHORT)
+            # ===============================
+            elif current_position == -1:
+                # Fecha short se tendência inverter
+                if pred_diff > 0.15 or rsi < 25 or macd > macd_signal or ema20 > ema60:
+                    signals.append('CLOSE_SHORT')
                     current_position = 0
                 else:
                     signals.append('HOLD')
 
             positions.append(current_position)
 
-        # Ajusta o tamanho da lista
+        # Ajuste inicial
         signals.insert(0, 'HOLD')
         positions.insert(0, 0)
 
@@ -199,17 +224,16 @@ class TradingLSTMModel:
 
 
     def backtest_strategy(self):
-        """Executa backtesting da estratégia (versão corrigida com preços reais)"""
+        """Executa backtesting da estratégia (com suporte a posições short)."""
         _, test_predict, _, y_test = self.predict()
 
-        # ⚠️ Agora já estão invertidos para escala real (em R$)
         predictions = test_predict.flatten()
         actual_prices = y_test.flatten()
 
         # Gerar sinais
         signals, positions = self.generate_signals(predictions, actual_prices, self.test_dates)
 
-        # Backtesting
+        # Inicialização
         cash = self.initial_capital
         shares = 0
         trades = []
@@ -223,15 +247,16 @@ class TradingLSTMModel:
             current_date = self.test_dates[i]
             current_price = actual_prices[i]
 
+            # ===============================
+            # 🟢 COMPRA NORMAL (LONG)
+            # ===============================
             if signal == 'BUY' and cash > 0:
                 shares_to_buy = cash / current_price
                 cost = shares_to_buy * current_price
                 taxa = cost * self.taxa_corretagem
-
                 shares += shares_to_buy
                 cash = 0
                 entry_price = current_price
-
                 trades.append({
                     'date': current_date,
                     'action': 'BUY',
@@ -240,12 +265,14 @@ class TradingLSTMModel:
                     'taxa': taxa
                 })
 
+            # ===============================
+            # 🔴 VENDA NORMAL (fechar posição comprada)
+            # ===============================
             elif signal == 'SELL' and shares > 0:
                 revenue = shares * current_price
                 taxa = revenue * self.taxa_corretagem
                 cash = revenue - taxa
                 profit_pct = ((current_price - entry_price) / entry_price) * 100
-
                 trades.append({
                     'date': current_date,
                     'action': 'SELL',
@@ -255,25 +282,66 @@ class TradingLSTMModel:
                 })
                 shares = 0
 
-            # Atualiza o patrimônio
-            portfolio_value = cash + (shares * current_price if shares > 0 else 0)
+            # ===============================
+            # 🔽 VENDA A DESCOBERTO (SHORT)
+            # ===============================
+            elif signal == 'SELL_SHORT' and cash > 0:
+                shares = - (cash / current_price)
+                cash += abs(shares) * current_price
+                entry_price = current_price
+                trades.append({
+                    'date': current_date,
+                    'action': 'SELL_SHORT',
+                    'price': current_price,
+                    'shares': shares
+                })
+
+            # ===============================
+            # 🔁 FECHAR POSIÇÃO SHORT
+            # ===============================
+            elif signal == 'CLOSE_SHORT' and shares < 0:
+                # Lucro: diferença entre preço de venda (entry_price) e recompra (current_price)
+                profit = abs(shares) * (entry_price - current_price)
+                taxa = abs(shares) * current_price * self.taxa_corretagem
+                cash += profit - taxa
+                profit_pct = ((entry_price - current_price) / entry_price) * 100
+                trades.append({
+                    'date': current_date,
+                    'action': 'CLOSE_SHORT',
+                    'price': current_price,
+                    'profit_pct': profit_pct
+                })
+                shares = 0
+
+            # ===============================
+            # 💰 Atualiza patrimônio total
+            # ===============================
+            portfolio_value = cash + (shares * current_price if shares != 0 else 0)
             equity_curve.append(portfolio_value)
 
-        # Fechar posição final
+        # Fecha qualquer posição aberta no fim
         if shares > 0:
             final_price = actual_prices[-1]
             revenue = shares * final_price
             taxa = revenue * self.taxa_corretagem
             cash = revenue - taxa
-            profit_pct = ((final_price - entry_price) / entry_price) * 100
             trades.append({
                 'date': self.test_dates[-1],
                 'action': 'SELL_FINAL',
-                'price': final_price,
-                'taxa': taxa,
-                'profit_pct': profit_pct
+                'price': final_price
             })
-            equity_curve[-1] = cash
+            shares = 0
+        elif shares < 0:
+            final_price = actual_prices[-1]
+            profit = abs(shares) * (entry_price - final_price)
+            taxa = abs(shares) * final_price * self.taxa_corretagem
+            cash += profit - taxa
+            trades.append({
+                'date': self.test_dates[-1],
+                'action': 'CLOSE_SHORT_FINAL',
+                'price': final_price
+            })
+            shares = 0
 
         return equity_curve, trades
 
