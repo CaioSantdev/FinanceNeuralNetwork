@@ -1,0 +1,2 @@
+ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
+SANB11.SA,0.4443040115627527,0.3082803598408826,1.2125236424959722,0.9096382126871804,trend_filter,-7.270727979015302,-20.507872580017093,30

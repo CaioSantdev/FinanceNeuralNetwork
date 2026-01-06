@@ -29,8 +29,8 @@ def fetch_hist(ticker: str, years: int = 10) -> pd.DataFrame:
     Baixa histórico do Yahoo Finance sem ajuste automático
     e mantém OHLC + AdjClose + Volume.
     """
-    start = datetime.strptime("2013-01-01", "%Y-%m-%d")
-    end   = datetime.strptime("2025-06-30", "%Y-%m-%d")
+    start = datetime.strptime("2019-01-01", "%Y-%m-%d")
+    end   = datetime.strptime("2025-11-19", "%Y-%m-%d")
 
     df = yf.download(
         ticker,
@@ -270,7 +270,7 @@ def backtest_discrete(prices: np.ndarray,
     return np.array(equity), trades_df
 
 
-# 5) PIPELINE COMPLETO PARA UM TICKER
+# 5) pip
 def run_pipeline(ticker: str,
                  window: int = 50,
                  test_ratio: float = 0.2,
@@ -296,21 +296,15 @@ def run_pipeline(ticker: str,
     train_scaled = scaler.fit_transform(train_df.values)
     test_scaled = scaler.transform(test_df.values)
 
-    # ---------------------
     # 2) Janelas p/ LSTM
-    # ---------------------
     X_train, y_train = make_windows(train_scaled, target_idx, window)
     X_test, y_test = make_windows(test_scaled, target_idx, window)
 
-    # ---------------------
     # 3) Modelo LSTM
-    # ---------------------
     model = build_lstm(window, len(features))
-    # ckpt_path = os.path.join(outdir, f"best_{ticker.replace('.','_')}.keras")
 
     cbs = [
-        callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True),
-        # callbacks.ModelCheckpoint(ckpt_path, monitor="val_loss", save_best_only=True)
+        callbacks.EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
     ]
 
     hist = model.fit(
@@ -322,8 +316,6 @@ def run_pipeline(ticker: str,
         callbacks=cbs,
         verbose=1
     )
-
-    # model.save(ckpt_path)
 
     # ---------------------
     # 4) Previsões no teste
@@ -353,15 +345,11 @@ def run_pipeline(ticker: str,
     # ---------------------
     # 6) Índices de tempo + EMA alinhada ao teste
     # ---------------------
-    # Índices da parte de teste no df original
-    test_index_full = df.iloc[len(train_df):].index     # len = n_test
-    test_index = test_index_full[window:]               # len = n_test - window = len(y_true)
+    test_index_full = df.iloc[len(train_df):].index
+    test_index = test_index_full[window:]
+    ema_test_full = df[f"EMA_{ema_span}"].iloc[len(train_df):].values
+    ema_test = ema_test_full[window:]
 
-    # EMA alinhada com y_true/y_pred
-    ema_test_full = df[f"EMA_{ema_span}"].iloc[len(train_df):].values  # len = n_test
-    ema_test = ema_test_full[window:]                                   # len = len(y_true)
-
-    # Sanidade: todos com o mesmo tamanho
     assert len(test_index) == len(y_true) == len(y_pred) == len(ema_test)
 
     # ---------------------
@@ -383,8 +371,8 @@ def run_pipeline(ticker: str,
     for name, fn in strategies.items():
         print(f"\n→ Estratégia: {name}")
         signals = fn()
-        # Sanidade: signals deve ter mesmo tamanho que y_true
         assert len(signals) == len(y_true)
+
         equity, trades = backtest_discrete(
             y_true,
             signals,
@@ -393,8 +381,34 @@ def run_pipeline(ticker: str,
             stop_loss=stop_loss,
             take_profit=take_profit
         )
+
         roi = (equity[-1] / initial_capital - 1) * 100
         print(f"ROI: {roi:.2f}% | Trades: {len(trades)}")
+
+        # ======================================================
+        # 🎯 --- RELATÓRIO FINANCEIRO (NOVO BLOCO) ---
+        # ======================================================
+        total_fees = 0.0
+        for _, row in trades.iterrows():
+            qty = row["shares"]
+            price = row["price"]
+            fee_cost = abs(qty * price) * fee
+            total_fees += fee_cost
+
+        final_capital = equity[-1]
+        gross_profit = final_capital + total_fees - initial_capital
+        net_profit = final_capital - initial_capital
+
+        print("\n*** RELATÓRIO FINANCEIRO***")
+        print(f"  Estratégia:       {name}")
+        print(f"  Capital inicial:  R$ {initial_capital:,.2f}")
+        print(f"  Capital final:    R$ {final_capital:,.2f}")
+        print(f"  Lucro bruto:      R$ {gross_profit:,.2f}")
+        print(f"  Total em taxas:   R$ {total_fees:,.2f}")
+        print(f"  Lucro líquido:    R$ {net_profit:,.2f}")
+        print("------------------------------------------------------\n")
+
+        # ======================================================
 
         # Salva trades desta estratégia
         trades_path = os.path.join(outdir, f"trades_{ticker.replace('.','_')}_{name}.csv")
@@ -408,25 +422,21 @@ def run_pipeline(ticker: str,
         }
 
     # ---------------------
-    # 8) Buy & Hold (mesmo período)
+    # 8) Buy & Hold
     # ---------------------
     bh_shares = int(initial_capital // y_true[0])
     entry_cost = bh_shares * y_true[0]
     entry_fee = entry_cost * fee
     bh_cash = initial_capital - entry_cost - entry_fee
 
-    # Equity diária (sem taxas intermediárias)
     bh_equity = bh_cash + bh_shares * y_true
-    # Saída final com taxa
     exit_fee = bh_shares * y_true[-1] * fee
     bh_final = bh_cash + bh_shares * y_true[-1] - exit_fee
     roi_bh = (bh_final / initial_capital - 1) * 100
 
-    print(f"\n📊 ROI Buy & Hold ({ticker}): {roi_bh:.2f}%")
+    print(f"\n ROI Buy & Hold ({ticker}): {roi_bh:.2f}%")
 
-    # ---------------------
     # 9) Ranking de estratégias
-    # ---------------------
     rank = pd.DataFrame(
         [
             {"estrategia": k, "roi": v["roi"], "trades": len(v["trades"])}
@@ -438,9 +448,7 @@ def run_pipeline(ticker: str,
     rank.to_csv(rank_path, index=False)
     print(f"\n🏆 Ranking salvo em: {rank_path}")
 
-    # ---------------------
     # 10) CSV de métricas gerais (melhor estratégia x Buy&Hold)
-    # ---------------------
     best_name = rank.iloc[0]["estrategia"]
     best_roi = rank.iloc[0]["roi"]
     best_trades = len(results_all[best_name]["trades"])
@@ -459,9 +467,7 @@ def run_pipeline(ticker: str,
     }]).to_csv(summary_path, index=False)
     print(f"💾 Summary salvo em: {summary_path}")
 
-    # ---------------------
     # 11) Gráfico comparando equity das estratégias
-    # ---------------------
     plt.figure(figsize=(16, 6))
     for name, r in results_all.items():
         # equity tem len = len(prices)+1; alinhamos com range
@@ -472,11 +478,9 @@ def run_pipeline(ticker: str,
     plt.grid(True, alpha=0.3)
     comp_path = os.path.join(outdir, f"comparison_{ticker.replace('.','_')}.png")
     plt.savefig(comp_path, dpi=140)
-    print(f"📊 Comparação de estratégias salva em: {comp_path}")
+    print(f" Comparação de estratégias salva em: {comp_path}")
 
-    # ---------------------
     # 12) Painel detalhado para a melhor estratégia
-    # ---------------------
     best_equity = results_all[best_name]["equity"]
     best_signals = results_all[best_name]["signals"]
 
@@ -512,13 +516,13 @@ def run_pipeline(ticker: str,
     ax3.set_title("Erros de Previsão")
     ax3.grid(True, alpha=0.3)
 
-    # (4) Distribuição dos erros (histograma)
+    # (4) Distribuição dos erros 
     ax4 = plt.subplot(3, 2, 4)
     ax4.hist(errors, bins=40, alpha=0.8)
     ax4.set_title("Distribuição dos Erros")
     ax4.grid(True, alpha=0.3)
 
-    # (5) Evolução do patrimônio (melhor estratégia)
+    # (5) Evolução do patrimônio
     ax5 = plt.subplot(3, 2, 5)
     # Alinha equity com test_index (descarta primeiro ponto de capital inicial)
     ax5.plot(test_index, best_equity[1:], label=f"{best_name} ({best_roi:.2f}%)", linewidth=1.5)
@@ -536,7 +540,7 @@ def run_pipeline(ticker: str,
     plt.tight_layout()
     detailed_path = os.path.join(outdir, f"detailed_{ticker.replace('.','_')}.png")
     plt.savefig(detailed_path, dpi=140)
-    print(f"📈 Painel detalhado salvo em: {detailed_path}")
+    print(f"Painel detalhado salvo em: {detailed_path}")
 
 
 # =========================================================
@@ -549,6 +553,7 @@ if __name__ == "__main__":
         "3": ("BBAS3.SA", "Banco do Brasil ON"),
         "4": ("SANB11.SA", "Santander Brasil Units"),
         "5": ("BPAC11.SA", "BTG Pactual Units"),
+
         "6": ("VALE3.SA", "Vale"),
         "7": ("PETR4.SA", "Petrobras"),
         "8": ("ABEV3.SA", "Ambev"),
@@ -557,7 +562,7 @@ if __name__ == "__main__":
         "11": ("BSLI3.SA", "BRB-Banco de Brasilia SA"),
     }
 
-    print("\n=== LSTM Zanotto + Estratégias de Trade (Bancos do Brasil) ===")
+    print("\n=== LSTM ===")
     for k, (t, n) in bancos.items():
         print(f"{k}) {t} — {n}")
 

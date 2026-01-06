@@ -1,0 +1,2 @@
+ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
+BBAS3.SA,0.5251670303768445,0.37653026185019994,1.6097185516103503,0.9613249525871306,trend_filter,5.42555768173989,-17.141562855010996,38

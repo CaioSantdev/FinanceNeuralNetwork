@@ -1,0 +1,2 @@
+ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
+WEGE3.SA,1.7363082290988896,1.2918131822606704,2.6694557306595543,0.9565560561010031,trend_filter,0.3641694496307579,47.47967879348756,24

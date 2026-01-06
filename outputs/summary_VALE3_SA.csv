@@ -1,0 +1,2 @@
+ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
+VALE3.SA,1.2834330207117777,1.0721196149588248,1.9345175440798767,0.7163303449437803,gap_aggressive_0.4%,-5.425091237792989,-21.049893691909794,26

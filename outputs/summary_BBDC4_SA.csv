@@ -1,0 +1,2 @@
+ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
+BBDC4.SA,0.2583014951002157,0.17745951470423305,1.445302424892309,0.9423741078136983,gap_aggressive_0.4%,-6.052060772718382,-25.720931837707518,64
