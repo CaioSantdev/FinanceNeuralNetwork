@@ -1,2 +1,0 @@
-ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
-BPAC11.SA,1.3108463000230184,1.0763482879558355,3.344834377941074,0.6283997944353003,gap_aggressive_0.4%,3.646215194828084,-22.58253807703019,32

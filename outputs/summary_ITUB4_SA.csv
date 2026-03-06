@@ -1,2 +1,0 @@
-ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
-ITUB4.SA,0.4570500590783979,0.3636666057601046,1.287354859331618,0.9146026633784253,gap_aggressive_0.4%,0.5641495869789237,0.018685063476575614,4

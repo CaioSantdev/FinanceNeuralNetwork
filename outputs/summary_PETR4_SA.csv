@@ -1,2 +1,0 @@
-ticker,rmse,mae,mape(%),r2,best_strategy,roi_lstm_best(%),roi_buyhold(%),n_trades_best
-PETR4.SA,1.772542658243872,1.6318141006509008,5.160617353718953,-0.11895881114689666,gap_aggressive_0.4%,1.9812989038276552,14.716932561035145,2
