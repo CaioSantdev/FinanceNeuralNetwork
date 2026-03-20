@@ -1,36 +1,3 @@
-# =========================================================
-# LSTM Zanotto + Multi-estratégias + Ranking + Short-selling
-# VERSÃO SEM DATA LEAKAGE
-#
-# CORREÇÕES APLICADAS:
-#
-# [LEAK 1] EMA calculada ANTES do split treino/teste
-#   → ANTES: EMA era calculada no df completo (vazava dados futuros na janela do treino)
-#   → DEPOIS: EMA calculada separadamente em train e test, usando apenas dados passados
-#
-# [LEAK 2] StandardScaler.fit() no dataset completo (train + test)
-#   → ANTES: scaler.fit_transform(df_completo) antes do split
-#   → DEPOIS: scaler.fit() apenas no treino; scaler.transform() no teste
-#             Corrigido em run_pipeline() E em walk_forward_validation()
-#
-# [LEAK 3] walk_forward_validation() com scaler.fit() no split completo
-#   → ANTES: scaler.fit_transform(train_df) OK, mas test_df incluía dados além do split
-#   → DEPOIS: scaler fitado apenas em train_df de cada fold; transform() apenas no test_df
-#
-# [LEAK 4] Estratégias usando y_true[i] (preço atual do período i)
-#   → ANTES: sinais gerados com real[i-1] e pred[i] → OK para entrada, mas
-#             backtest recebia y_true diretamente (preço já conhecido)
-#   → DEPOIS: separação explícita entre preço de entrada (i-1) e preço de saída (i)
-#             garantindo que o sinal do dia i usa apenas info disponível no dia i-1
-#
-# [LEAK 5] Inversão do scaling com índice fixo hardcoded no walk-forward
-#   → ANTES: target_mean/std extraídos sem garantia de alinhamento com target_idx
-#   → DEPOIS: sempre usando scaler.mean_[target_idx] e scaler.scale_[target_idx]
-#
-# [LEAK 6] fetch_hist monkey-patching no __main__
-#   → ANTES: substituição frágil de fetch_hist via __main__ (bug silencioso)
-#   → DEPOIS: years passado como parâmetro direto para run_pipeline()
-# =========================================================
 
 import os, math, random
 from datetime import datetime, timedelta
@@ -54,7 +21,7 @@ np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
 # =========================================================
-# 1) DOWNLOAD + PRÉ-PROCESSAMENTO ZANOTTO
+# 1) downlaod, selecao e data e processamento
 # =========================================================
 def fetch_hist(ticker, years=10):
     end = datetime.strptime("2020-12-31", "%Y-%m-%d")
@@ -75,7 +42,7 @@ def fetch_hist(ticker, years=10):
 
 def zanotto_preprocess(df):
     """
-    Pré-processamento Zanotto — SEM cálculo de EMA aqui.
+    Pré-processamento 
     A EMA é calculada separadamente após o split para evitar leakage.
     """
     if isinstance(df.columns, pd.MultiIndex):
@@ -103,7 +70,6 @@ def zanotto_preprocess(df):
 
 def compute_ema_no_leakage(train_series: pd.Series, test_series: pd.Series, span: int):
     """
-    [LEAK 1] Calcula EMA sem vazamento:
     - Treino: EMA calculada apenas com dados de treino.
     - Teste:  EMA continua a partir do último estado do treino
               (usando ewm com valores de inicialização corretos).
@@ -167,10 +133,6 @@ def build_lstm(n_steps, n_features, units=500, dropout=0.3):
 # 3) ESTRATÉGIAS
 # =========================================================
 def strategy_gap_pct(pred, real, pct_gap=0.01):
-    """
-    [LEAK 4 CORRIGIDO] Sinal para dia i usa real[i-1] (preço de ontem, conhecido)
-    e pred[i] (previsão de amanhã). Não usa real[i].
-    """
     sig = ["HOLD"]
     for i in range(1, len(pred)):
         diff_pct = (pred[i] - real[i - 1]) / real[i - 1]
@@ -343,11 +305,6 @@ def backtest_buy_and_hold(prices, initial_capital=5000, fee_rate=0.0003, min_vol
 # 5) WALK-FORWARD VALIDATION — CORRIGIDO
 # =========================================================
 def walk_forward_validation(df, features, target_idx, window, n_splits=5):
-    """
-    [LEAK 2 + LEAK 3 CORRIGIDOS]
-    Scaler é fitado APENAS no train_df de cada fold.
-    test_df recebe apenas transform(), sem vazar estatísticas futuras.
-    """
     split_size = len(df) // (n_splits + 1)
     results = []
 
@@ -402,7 +359,7 @@ def walk_forward_validation(df, features, target_idx, window, n_splits=5):
 
 
 # =========================================================
-# 6) FUNÇÕES DE PLOT (inalteradas)
+# 6) MOSTRAR OS GRAFICOS FINALMENTE V2 FUNCIONADOOOOOOOOOOOOOOO
 # =========================================================
 def save_plot_real_vs_pred(test_idx, y_true, y_pred, signals, ticker, strategy_name, outdir):
     plt.figure(figsize=(16, 6))
@@ -423,7 +380,7 @@ def save_plot_real_vs_pred(test_idx, y_true, y_pred, signals, ticker, strategy_n
     plt.legend(); plt.grid(True, alpha=0.3); plt.tight_layout()
     path = f"{outdir}/real_vs_pred_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📈 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_real_vs_pred_clean(test_idx, y_true, y_pred, ticker, strategy_name, outdir):
@@ -444,7 +401,7 @@ def save_plot_loss(history, ticker, outdir):
     plt.legend(); plt.grid(True, alpha=0.3); plt.tight_layout()
     path = f"{outdir}/loss_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📉 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_errors(test_idx, errors, ticker, outdir):
@@ -455,7 +412,7 @@ def save_plot_errors(test_idx, errors, ticker, outdir):
     plt.grid(True, alpha=0.3); plt.tight_layout()
     path = f"{outdir}/errors_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📉 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_error_distribution(errors, ticker, outdir):
@@ -465,7 +422,7 @@ def save_plot_error_distribution(errors, ticker, outdir):
     plt.grid(True, alpha=0.3); plt.tight_layout()
     path = f"{outdir}/error_distribution_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📊 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_best_equity(best_equity, ticker, strategy_name, initial_capital, outdir):
@@ -484,7 +441,7 @@ def save_plot_best_equity(best_equity, ticker, strategy_name, initial_capital, o
     plt.tight_layout()
     path = f"{outdir}/best_equity_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"💰 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_all_strategies(results_all, ticker, outdir):
@@ -503,7 +460,7 @@ def save_plot_all_strategies(results_all, ticker, outdir):
     plt.tight_layout()
     path = f"{outdir}/comparison_strategies_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📊 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 def save_plot_strategy_vs_buyhold(best_equity, buyhold_equity, ticker, strategy_name, outdir):
@@ -526,7 +483,7 @@ def save_plot_strategy_vs_buyhold(best_equity, buyhold_equity, ticker, strategy_
     plt.tight_layout()
     path = f"{outdir}/strategy_vs_buyhold_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📊 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
     print(f"   Estratégia: R${best_equity[0]:.2f} → R${best_equity[-1]:.2f} ({roi_strategy:.2f}%)")
     print(f"   Buy & Hold: R${buyhold_equity[0]:.2f} → R${buyhold_equity[-1]:.2f} ({roi_buyhold:.2f}%)")
 
@@ -570,18 +527,17 @@ def save_plot_walk_forward(wf_results, ticker, outdir):
     plt.tight_layout()
     path = f"{outdir}/walk_forward_{ticker.replace('.', '_')}.png"
     plt.savefig(path, dpi=140, bbox_inches="tight"); plt.close()
-    print(f"📊 Gráfico salvo em: {path}")
+    print(f"Gráfico salvo em: {path}")
 
 
 # =========================================================
-# 7) PIPELINE COMPLETO — CORRIGIDO
+# 7) PIPELINE FUNCIONANDO
 # =========================================================
 def run_pipeline(ticker, window=50, test_ratio=0.2, outdir="resultados",
                  initial_capital=5000, do_walk_forward=True, years=10):
     os.makedirs(outdir, exist_ok=True)
     print(f"\n=== {ticker} ===")
 
-    # [LEAK 6 CORRIGIDO] years passado como parâmetro, sem monkey-patching
     raw = fetch_hist(ticker, years=years)
     df, _ = zanotto_preprocess(raw)
 
@@ -594,7 +550,6 @@ def run_pipeline(ticker, window=50, test_ratio=0.2, outdir="resultados",
     # Split ANTES de qualquer transformação
     train_df_raw, test_df_raw = train_test_split_ordered(df[["Open", "High", "Low", "Close", "Volume"]], test_ratio)
 
-    # [LEAK 1 CORRIGIDO] EMA calculada separadamente por split
     ema_train, ema_test = compute_ema_no_leakage(
         train_df_raw["Close"], test_df_raw["Close"], ema_span
     )
@@ -721,7 +676,7 @@ def run_pipeline(ticker, window=50, test_ratio=0.2, outdir="resultados",
     save_plot_strategy_vs_buyhold(best_equity_al, buyhold_equity_al, ticker, best_name, outdir)
     save_plot_regression_metrics(metrics_dict, ticker, outdir)
 
-    print("\n✅ Processamento concluído com sucesso.")
+    print("\nProcessamento concluído com sucesso.")
     return results_all, rank, wf_results
 
 
@@ -756,5 +711,4 @@ if __name__ == "__main__":
 
     outdir = f"resultados/{years}anos_{bancos[c][1].replace(' ', '_')}"
 
-    # [LEAK 6 CORRIGIDO] years passado como parâmetro limpo
     run_pipeline(ticker, outdir=outdir, do_walk_forward=do_wf, years=years)
