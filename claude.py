@@ -1093,6 +1093,6 @@ if __name__ == "__main__":
     p = input("Escolha [1-3]: ").strip()
     years = {'1': 5, '2': 10, '3': 15}.get(p, 10)
 
-    outdir = f"resultados/{years}anos_{bancos[c][1].replace(' ', '_')}"
+    outdir = f"resultados_indicadores/{years}anos_{bancos[c][1].replace(' ', '_')}"
 
     run_pipeline(ticker, outdir=outdir, do_walk_forward=do_wf, years=years)
