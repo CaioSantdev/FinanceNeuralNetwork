@@ -25,11 +25,16 @@ tf.random.set_seed(SEED)
 # 1) DOWNLOAD + PRÉ-PROCESSAMENTO
 # =========================================================
 def fetch_hist(ticker, years=10):
-    end   = datetime.strptime("2020-12-31", "%Y-%m-%d")
-    start = end - timedelta(days=365 * years)
+    end = datetime.strptime("2020-12-31", "%Y-%m-%d")
+    if years == 5:
+        start = "2015-01-01"
+    elif years == 10:
+        start = "2010-01-01"
+    else:
+        start = (end - timedelta(days=365 * years)).strftime("%Y-%m-%d")
     df = yf.download(
         ticker,
-        start=start.strftime("%Y-%m-%d"),
+        start=start,
         end=end.strftime("%Y-%m-%d"),
         auto_adjust=False,
         progress=False
