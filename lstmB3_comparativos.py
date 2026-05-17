@@ -462,15 +462,17 @@ def save_plot_compare_regression_metrics(exp5, exp10, ticker, outdir):
 
 
 def save_plot_compare_best_equity(exp5, exp10, ticker, outdir):
-    """Melhor estratégia de cada experimento vs Buy & Hold do experimento de 10 anos."""
+    """Melhor estratégia de cada experimento vs Buy & Hold dos períodos de 5 e 10 anos."""
     initial_capital = 5000
 
     eq5   = exp5["best_equity"]
     eq10  = exp10["best_equity"]
+    bh5   = exp5["buyhold_equity"]
     bh10  = exp10["buyhold_equity"]
 
     roi_eq5  = (eq5[-1]  / initial_capital - 1) * 100
     roi_eq10 = (eq10[-1] / initial_capital - 1) * 100
+    roi_bh5  = (bh5[-1]  / initial_capital - 1) * 100
     roi_bh10 = (bh10[-1] / initial_capital - 1) * 100
 
     plt.figure(figsize=(16, 6))
@@ -483,13 +485,18 @@ def save_plot_compare_best_equity(exp5, exp10, ticker, outdir):
              label=f"{exp10['best_name']} (10 anos) | ROI: {roi_eq10:.2f}%",
              linewidth=2, linestyle="--", color="tab:orange")
 
+    plt.plot(np.arange(len(bh5)), bh5,
+             label=f"Buy & Hold (5 anos) | ROI: {roi_bh5:.2f}%",
+             linewidth=1.8, linestyle="-.", color="tab:purple")
+
     plt.plot(np.arange(len(bh10)), bh10,
-             label=f"Buy & Hold | ROI: {roi_bh10:.2f}%",
+             label=f"Buy & Hold (10 anos) | ROI: {roi_bh10:.2f}%",
              linewidth=1.8, linestyle=":", color="tab:green")
 
     # Valores finais anotados
     plt.text(len(eq5)  - 1, eq5[-1],  f"R${eq5[-1]:,.0f}",  color="tab:blue",   fontsize=9, va="bottom")
     plt.text(len(eq10) - 1, eq10[-1], f"R${eq10[-1]:,.0f}", color="tab:orange", fontsize=9, va="bottom")
+    plt.text(len(bh5)  - 1, bh5[-1],  f"R${bh5[-1]:,.0f}",  color="tab:purple", fontsize=9, va="bottom")
     plt.text(len(bh10) - 1, bh10[-1], f"R${bh10[-1]:,.0f}", color="tab:green",  fontsize=9, va="bottom")
 
     plt.axhline(y=initial_capital, color="gray", linestyle=":", linewidth=1.2,
